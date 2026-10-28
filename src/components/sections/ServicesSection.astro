@@ -1,0 +1,152 @@
+---
+// src/components/sections/ServicesSection.astro — architettura grafica §5.2.4 (Bento Grid vettoriale, statica)
+// ServicesBentoTabs.tsx (tab interattive con Motion) arriverà allo Step 4.
+import SectionHeader from '@sections/SectionHeader.astro';
+import { sectionCopy } from '@/content/site';
+import { services, type ServiceLayout } from '@/content/services';
+
+const layoutClass: Record<ServiceLayout, string> = {
+  wide: 'lg:col-span-2',
+  narrow: 'lg:col-span-1',
+  full: 'lg:col-span-3',
+};
+
+// PLACEHOLDER: etichette decorative del mockup "flusso di automazione"
+const flowSteps = ['Evento', 'Elaborazione', 'Notifica', 'Archivio'];
+const lastFlowStep = flowSteps.length - 1;
+---
+
+<section
+  id="servizi"
+  aria-labelledby="servizi-title"
+  class="border-b border-[var(--border-subtle)] py-24 sm:py-32"
+>
+  <div class="mx-auto max-w-7xl px-6 lg:px-8">
+    <SectionHeader id="servizi-title" {...sectionCopy.services} />
+
+    <div class="mt-16 grid grid-cols-1 gap-6 lg:grid-cols-3">
+      {
+        services.map((service, index) => (
+          <article
+            data-animate="fade-up"
+            class:list={[
+              'specular-card flex flex-col overflow-hidden rounded-2xl',
+              layoutClass[service.layout],
+            ]}
+          >
+            {/* Area mockup: altezza fissa (CLS 0), texture tecnica su un livello interno */}
+            <div
+              aria-hidden="true"
+              class="bg-technical-grid relative h-56 border-b border-[var(--border-subtle)]"
+            >
+              {service.mockup === 'latency' && (
+                <div class="absolute inset-0 flex flex-col gap-4 p-6">
+                  <div class="flex items-center justify-between gap-4">
+                    <span class="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)] px-2.5 py-1 font-mono text-[11px] tracking-widest text-[var(--text-muted)] uppercase">
+                      Latenza · ms
+                    </span>
+                    <span class="inline-flex items-center gap-2 font-mono text-[11px] tracking-widest text-[#FAFAFA] uppercase">
+                      <span class="h-1.5 w-1.5 rounded-full bg-white" />
+                      LCP &lt; 1.2 s
+                    </span>
+                  </div>
+                  <svg
+                    viewBox="0 0 400 120"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                    class="min-h-0 w-full flex-1"
+                  >
+                    <g stroke="currentColor" stroke-width="1" class="text-white/[0.06]">
+                      <line x1="0" y1="30" x2="400" y2="30" />
+                      <line x1="0" y1="60" x2="400" y2="60" />
+                      <line x1="0" y1="90" x2="400" y2="90" />
+                    </g>
+                    <polyline
+                      points="0,14 40,26 80,22 120,44 160,40 200,62 240,66 280,82 320,86 360,92 392,94"
+                      stroke="currentColor"
+                      stroke-width="1.25"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      vector-effect="non-scaling-stroke"
+                      class="text-white/70"
+                    />
+                    <circle cx="392" cy="94" r="3.5" fill="#FAFAFA" />
+                  </svg>
+                </div>
+              )}
+
+              {service.mockup === 'terminal' && (
+                <div class="absolute inset-x-6 top-6 bottom-0 overflow-hidden rounded-t-lg border border-b-0 border-[var(--border-subtle)] bg-[var(--bg-primary)]">
+                  <div class="flex items-center gap-1.5 border-b border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)] px-3 py-2">
+                    <span class="h-2 w-2 rounded-full bg-zinc-700" />
+                    <span class="h-2 w-2 rounded-full bg-zinc-700" />
+                    <span class="h-2 w-2 rounded-full bg-zinc-700" />
+                    <span class="ml-2 font-mono text-[11px] text-[var(--text-muted)]">deploy</span>
+                  </div>
+                  <div class="space-y-1.5 p-4 font-mono text-xs leading-5 text-[var(--text-muted)]">
+                    <p class="text-[#FAFAFA]">$ git push origin main</p>
+                    <p>
+                      → astro check <span class="text-[#FAFAFA]">ok</span>
+                    </p>
+                    <p>
+                      → build <span class="text-[#FAFAFA]">ok</span>
+                    </p>
+                    <p>
+                      → deploy <span class="text-[#FAFAFA]">ok</span>
+                    </p>
+                    <p class="flex items-center gap-2 text-[#FAFAFA]">
+                      <span class="h-1.5 w-1.5 rounded-full bg-white" />
+                      online
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {service.mockup === 'flow' && (
+                <div class="absolute inset-0 flex items-center px-4 sm:px-10">
+                  <div class="flex w-full items-center">
+                    {flowSteps.map((label, step) => (
+                      <div
+                        class:list={[
+                          'flex items-center',
+                          step > 0 && 'flex-1',
+                          step === lastFlowStep && 'hidden sm:flex',
+                        ]}
+                      >
+                        {step > 0 && <span class="mx-2 h-px min-w-4 flex-1 bg-white/20" />}
+                        <span class="inline-flex shrink-0 items-center gap-2 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)] px-2.5 py-1.5 font-mono text-[11px] tracking-widest text-[var(--text-muted)] uppercase">
+                          <span
+                            class:list={[
+                              'h-1.5 w-1.5 rounded-full',
+                              step === lastFlowStep ? 'bg-white' : 'bg-zinc-600',
+                            ]}
+                          />
+                          {label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div class="flex flex-1 flex-col gap-3 p-6 sm:p-8">
+              <p class="font-mono text-xs tracking-widest text-[var(--text-muted)] uppercase">
+                {String(index + 1).padStart(2, '0')} · {service.tag}
+              </p>
+              <h3 class="text-h3 text-[#FAFAFA]">{service.title}</h3>
+              <p class="leading-relaxed text-[var(--text-muted)]">{service.description}</p>
+            </div>
+          </article>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
+<script>
+  // Spotlight --mouse-x / --mouse-y sulle .specular-card statiche (≈0.3 KB gzip, delegato, passivo)
+  import { initSpotlight } from '@/lib/spotlight';
+
+  initSpotlight();
+</script>

@@ -1,0 +1,25 @@
+---
+// src/components/sections/CtaSection.astro — architettura tecnica §4 (sezione di chiusura)
+// ContactForm.tsx (client:visible) arriverà allo Step 6: per ora un segnaposto onesto, nessun campo finto.
+import SectionHeader from '@sections/SectionHeader.astro';
+import { contactPlaceholder, sectionCopy } from '@/content/site';
+---
+
+<section id="contatti" aria-labelledby="contatti-title" class="py-24 sm:py-32">
+  <div class="mx-auto grid max-w-7xl grid-cols-1 items-start gap-16 px-6 lg:grid-cols-2 lg:px-8">
+    <SectionHeader id="contatti-title" {...sectionCopy.cta} />
+
+    <div
+      data-animate="fade-up"
+      class="rounded-2xl border border-dashed border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 sm:p-8"
+    >
+      <span
+        class="inline-flex items-center gap-2.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-3.5 py-1.5 font-mono text-xs tracking-widest text-[var(--text-muted)] uppercase"
+      >
+        <span aria-hidden="true" class="h-1.5 w-1.5 rounded-full bg-[#52525B]"></span>
+        {contactPlaceholder.badge}
+      </span>
+      <p class="mt-6 leading-relaxed text-[var(--text-muted)]">{contactPlaceholder.text}</p>
+    </div>
+  </div>
+</section>

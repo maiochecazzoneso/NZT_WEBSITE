@@ -1,0 +1,38 @@
+---
+// src/components/sections/TrustBar.astro — architettura grafica §5.2.2, tecnica §5 (CSS puro, 0 KB JS)
+// Solo testo per ora (tecnologie + performance budget): i loghi arriveranno in seguito.
+import { performanceBudget, trustStack } from '@/content/site';
+
+const items = [
+  ...trustStack.map((name) => ({ text: name, mono: false })),
+  ...performanceBudget.map((metric) => ({ text: `${metric.label} ${metric.value}`, mono: true })),
+];
+// Due copie identiche: la traslazione -50% chiude il loop senza salti; la seconda è nascosta alle tecnologie assistive
+const copies = [0, 1];
+---
+
+<section
+  aria-label="Tecnologie e obiettivi di performance"
+  class="border-b border-[var(--border-subtle)] py-10"
+>
+  <div class="marquee">
+    <div class="marquee-track">
+      {
+        copies.map((copy) => (
+          <ul class="marquee-group" aria-hidden={copy === 1 ? 'true' : undefined}>
+            {items.map((item) => (
+              <li
+                class:list={[
+                  'text-2xl whitespace-nowrap text-[#71717A] transition-colors duration-300 ease-out-expo hover:text-[#FAFAFA]',
+                  item.mono ? 'font-mono' : 'font-medium tracking-tight',
+                ]}
+              >
+                {item.text}
+              </li>
+            ))}
+          </ul>
+        ))
+      }
+    </div>
+  </div>
+</section>

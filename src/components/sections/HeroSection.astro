@@ -1,0 +1,79 @@
+---
+// src/components/sections/HeroSection.astro
+import HeroPill3D from '@interactive/HeroPill3D';
+---
+
+<section
+  class="relative flex min-h-[90vh] items-center overflow-hidden border-b border-[var(--border-subtle)] pt-24 pb-16"
+>
+  <!-- Bagliore ambientale monocromatico statico (0 costo GPU) -->
+  <div
+    class="pointer-events-none absolute top-1/2 right-[12%] h-[420px] w-[420px] -translate-y-1/2 rounded-full blur-[130px]"
+    style="background: radial-gradient(circle, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0) 70%);"
+    aria-hidden="true"
+  >
+  </div>
+
+  <div class="mx-auto w-full max-w-7xl px-6 lg:px-8">
+    <div class="grid grid-cols-1 items-center gap-12 lg:grid-cols-12">
+      <!-- COLONNA SINISTRA: Contenuto Testuale SEO (Renderizzato a 0ms) -->
+      <div class="z-10 space-y-8 lg:col-span-7">
+        <div
+          class="inline-flex items-center gap-2.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3.5 py-1.5"
+        >
+          <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-white"></span>
+          <span class="font-mono text-xs tracking-widest text-[var(--text-muted)] uppercase">
+            Architetture Software & Soluzioni Digitali
+          </span>
+        </div>
+
+        <h1
+          class="text-metallic text-4xl leading-[1.06] font-semibold tracking-tight sm:text-6xl lg:text-[4.25rem]"
+        >
+          Ingegneria digitale ad alte prestazioni per il tuo business.
+        </h1>
+
+        <p
+          class="max-w-2xl text-lg leading-relaxed font-normal text-[var(--text-muted)] sm:text-xl"
+        >
+          Progettiamo ecosistemi web, software su misura e automazioni aziendali con architettura
+          Zero-Latency. Estetica minimale, velocità estrema e posizionamento SEO nativo.
+        </p>
+
+        <div class="flex flex-wrap items-center gap-4 pt-2">
+          <a
+            href="#contatti"
+            class="inline-flex items-center justify-center rounded-lg bg-white px-6 py-3.5 text-sm font-medium text-[#050505] transition-all duration-300 hover:-translate-y-0.5 hover:bg-zinc-200"
+          >
+            Inizia un Progetto
+          </a>
+          <a
+            href="#servizi"
+            class="inline-flex items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-3.5 text-sm font-medium text-white transition-all duration-300 hover:border-[var(--border-hover)] hover:bg-[var(--bg-surface-elevated)]"
+          >
+            Esplora l'Architettura
+          </a>
+        </div>
+      </div>
+
+      <!-- COLONNA DESTRA: Contenitore ad Altezza Fissa (CLS = 0.00) per la Pillola 3D -->
+      <div
+        class="relative flex h-[420px] w-full items-center justify-center sm:h-[500px] lg:col-span-5"
+      >
+        <!-- Sagoma statica istantanea visibile prima dell'idratazione WebGL -->
+        <div
+          class="pointer-events-none absolute inset-0 flex items-center justify-center opacity-30"
+          aria-hidden="true"
+        >
+          <div
+            class="h-56 w-24 -rotate-[25deg] rounded-full border border-white/15 bg-gradient-to-b from-white/10 via-zinc-900/40 to-black shadow-2xl"
+          >
+          </div>
+        </div>
+
+        <!-- Isola React 3D caricata solo quando il main thread è libero -->
+        <HeroPill3D client:idle />
+      </div>
+    </div>
+  </div>
+</section>

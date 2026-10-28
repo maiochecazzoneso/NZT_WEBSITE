@@ -30,5 +30,29 @@ const { title, description, image } = Astro.props;
   </head>
   <body class="min-h-dvh bg-[var(--bg-primary)] text-[var(--text-primary)]">
     <slot />
+    <script>
+      // Step 5 — GSAP + ScrollTrigger + Lenis fuori dal percorso critico (architettura tecnica §2.2):
+      // import dinamico dopo l'evento load, a main thread libero (stessa logica di client:idle), così
+      // i ~52 KB gzip di GSAP/Lenis non pesano sul budget JS iniziale (< 35 KB, architettura grafica §7).
+      const boot = () => {
+        import('@/lib/gsap-init')
+          .then(({ initSmoothScrollAndAnimations }) => initSmoothScrollAndAnimations())
+          .catch(() => undefined); // animazioni opzionali: il contenuto resta comunque visibile
+      };
+
+      const schedule = () => {
+        if ('requestIdleCallback' in window) {
+          window.requestIdleCallback(boot, { timeout: 2000 });
+        } else {
+          setTimeout(boot, 200);
+        }
+      };
+
+      if (document.readyState === 'complete') {
+        schedule();
+      } else {
+        window.addEventListener('load', schedule, { once: true });
+      }
+    </script>
   </body>
 </html>

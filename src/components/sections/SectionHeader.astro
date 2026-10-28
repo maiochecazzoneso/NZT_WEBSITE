@@ -1,0 +1,19 @@
+---
+// src/components/sections/SectionHeader.astro
+// Intestazione di sezione condivisa: eyebrow mono + <h2> (scala §3) + lead. Rivelata con fade-up.
+interface Props {
+  /** id dell'<h2>, referenziato da aria-labelledby della <section> */
+  id: string;
+  eyebrow: string;
+  title: string;
+  lead?: string;
+}
+
+const { id, eyebrow, title, lead } = Astro.props;
+---
+
+<div class="max-w-3xl space-y-5" data-animate="fade-up">
+  <p class="font-mono text-xs tracking-widest text-[var(--text-muted)] uppercase">{eyebrow}</p>
+  <h2 id={id} class="text-h2 text-[#FAFAFA]">{title}</h2>
+  {lead && <p class="max-w-[62ch] text-lead text-[var(--text-muted)]">{lead}</p>}
+</div>

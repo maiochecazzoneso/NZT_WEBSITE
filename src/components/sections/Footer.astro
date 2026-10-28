@@ -1,0 +1,35 @@
+---
+// src/components/sections/Footer.astro — architettura tecnica §4 (link legali, P.IVA, toggle animazioni)
+import { AnimationToggle } from '@ui/AnimationToggle';
+import { site } from '@/content/site';
+
+const year = new Date().getFullYear();
+---
+
+<footer class="border-t border-[var(--border-subtle)]">
+  <div
+    class="mx-auto flex max-w-7xl flex-col gap-8 px-6 py-12 lg:flex-row lg:items-center lg:justify-between lg:px-8"
+  >
+    <div class="space-y-2">
+      <p class="text-sm font-semibold tracking-tight text-[#FAFAFA]">{site.name}</p>
+      <p class="font-mono text-xs tracking-widest text-[var(--text-muted)] uppercase">
+        © {year}
+        {site.name} · {site.legal.vat}
+      </p>
+    </div>
+
+    {/* PLACEHOLDER: pagine legali non ancora create → testo senza link (niente 404) */}
+    <ul class="flex flex-wrap gap-x-6 gap-y-2 text-sm text-[var(--text-muted)]">
+      {
+        site.legal.pages.map((legalPage) => (
+          <li>
+            {legalPage.label}{' '}
+            <span class="font-mono text-xs tracking-widest uppercase">(in arrivo)</span>
+          </li>
+        ))
+      }
+    </ul>
+
+    <AnimationToggle client:visible />
+  </div>
+</footer>

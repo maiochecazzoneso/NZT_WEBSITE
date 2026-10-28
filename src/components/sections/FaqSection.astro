@@ -1,0 +1,48 @@
+---
+// src/components/sections/FaqSection.astro — architettura grafica §5.2.6
+// <details>/<summary> nativi (architettura tecnica §5: "FaqAccordion.tsx o <details> nativo"): 0 KB JS,
+// risposte sempre nel DOM statico (pronte per il JSON-LD FAQPage dello Step 6).
+import SectionHeader from '@sections/SectionHeader.astro';
+import { faqs } from '@/content/faqs';
+import { sectionCopy } from '@/content/site';
+---
+
+<section
+  id="faq"
+  aria-labelledby="faq-title"
+  class="border-b border-[var(--border-subtle)] py-24 sm:py-32"
+>
+  <div class="mx-auto grid max-w-7xl grid-cols-1 gap-16 px-6 lg:grid-cols-12 lg:px-8">
+    <div class="lg:col-span-5">
+      <SectionHeader id="faq-title" {...sectionCopy.faq} />
+    </div>
+
+    <div data-animate="fade-up" class="border-t border-[var(--border-subtle)] lg:col-span-7">
+      {
+        faqs.map((faq) => (
+          <details class="group border-b border-[var(--border-subtle)]">
+            <summary class="flex cursor-pointer list-none items-center justify-between gap-6 py-6 text-left text-base font-medium text-[#FAFAFA] focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:outline-none sm:text-lg [&::-webkit-details-marker]:hidden">
+              <span>{faq.question}</span>
+              {/* "+" che ruota di 45° diventando una × bianca */}
+              <svg
+                aria-hidden="true"
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="h-5 w-5 shrink-0 text-[var(--text-muted)] transition-[rotate,color] duration-300 ease-out-expo group-open:rotate-45 group-open:text-[#FAFAFA]"
+              >
+                <path d="M5 12h14" />
+                <path d="M12 5v14" />
+              </svg>
+            </summary>
+            <p class="pr-12 pb-6 leading-relaxed text-[var(--text-muted)]">{faq.answer}</p>
+          </details>
+        ))
+      }
+    </div>
+  </div>
+</section>

@@ -1,0 +1,56 @@
+---
+// src/components/sections/Navbar.astro — architettura grafica §5.2.1 (header fisso 64px, glass + blur 12px)
+// Stili dei link presi dal design system (buttonVariants di ui/Button.tsx, eseguito solo in build: 0 KB JS).
+import { buttonVariants } from '@ui/Button';
+import { navLinks, primaryCta, site } from '@/content/site';
+---
+
+<header
+  class="fixed inset-x-0 top-0 z-50 h-16 border-b border-[var(--border-subtle)] bg-[var(--bg-glass)] backdrop-blur-[12px]"
+>
+  <nav
+    aria-label="Navigazione principale"
+    class="mx-auto flex h-full max-w-7xl items-center justify-between gap-6 px-6 lg:px-8"
+  >
+    <a href="/" class="text-sm font-semibold tracking-tight text-[#FAFAFA]">{site.name}</a>
+
+    <ul class="hidden items-center gap-8 lg:flex">
+      {
+        navLinks.map((link) => (
+          <li>
+            <a
+              href={link.href}
+              class="text-sm text-[var(--text-muted)] transition-colors duration-300 ease-out-expo hover:text-[#FAFAFA]"
+            >
+              {link.label}
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+
+    <div class="flex items-center gap-2">
+      <a href={site.clientAreaUrl} class={buttonVariants({ variant: 'ghost', size: 'sm' })}>
+        {/* Icona lucide "lock" (v0.468) in SVG inline: 0 dipendenze, 0 KB JS */}
+        <svg
+          aria-hidden="true"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.75"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="h-3.5 w-3.5"
+        >
+          <rect width="18" height="11" x="3" y="11" rx="2" ry="2"></rect>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+        <span class="sr-only sm:not-sr-only">Area Clienti</span>
+      </a>
+      <a href={primaryCta.href} class={buttonVariants({ variant: 'primary', size: 'sm' })}>
+        {primaryCta.label}
+      </a>
+    </div>
+  </nav>
+</header>
