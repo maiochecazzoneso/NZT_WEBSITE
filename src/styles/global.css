@@ -1,0 +1,86 @@
+@import 'tailwindcss';
+
+/* Esclude i documenti di progetto dalla scansione automatica delle classi (purge CSS) */
+@source not "../../docs";
+
+/* Font locali @fontsource (importati in MainLayout.astro) collegati alle utility font-sans / font-mono */
+@theme {
+  --font-sans:
+    'Geist Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+    'Segoe UI Symbol', 'Noto Color Emoji';
+  --font-mono:
+    'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  /* Scala tipografica §3: "tracking-widest (0.08em)" per Etichette / Badge (default Tailwind = 0.1em) */
+  --tracking-widest: 0.08em;
+}
+
+@layer base {
+  :root {
+    --bg-primary: #050505;
+    --bg-surface: #0c0c0e;
+    --bg-surface-elevated: #16161a;
+    --bg-glass: rgba(12, 12, 14, 0.72);
+    --text-primary: #fafafa;
+    --text-muted: #a1a1aa;
+    --text-subtle: #52525b;
+    --accent-primary: #ffffff;
+    --accent-glow: rgba(255, 255, 255, 0.1);
+    --border-subtle: rgba(255, 255, 255, 0.08);
+    --border-hover: rgba(255, 255, 255, 0.22);
+  }
+
+  html {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    scroll-behavior: auto; /* Gestito da Lenis */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: #ffffff;
+    color: #050505;
+  }
+}
+
+/* Accelerazione GPU per evitare repaint durante lo scroll */
+.gpu-accelerated {
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+/* Gradiente tipografico platino/argento per gli H1 e H2 */
+.text-metallic {
+  background: linear-gradient(180deg, #ffffff 0%, #ffffff 45%, #71717a 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Griglia tecnica di sfondo a bassissima opacità per la Bento Grid */
+.bg-technical-grid {
+  background-size: 24px 24px;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+}
+
+/* Effetto Spotlight sobrio controllato dal cursore */
+.specular-card {
+  position: relative;
+  background:
+    radial-gradient(
+      600px circle at var(--mouse-x, 50%) var(--mouse-y, -200px),
+      rgba(255, 255, 255, 0.055),
+      transparent 45%
+    ),
+    var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  transition:
+    border-color 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.specular-card:hover {
+  border-color: var(--border-hover);
+}
