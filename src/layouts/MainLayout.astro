@@ -19,6 +19,11 @@ const { title, description, image } = Astro.props;
 <html lang="it">
   <head>
     <BaseHead title={title} description={description} image={image} />
+    <script is:inline>
+      // Hero v2.1: navbar nascosta al primo paint (regole solo in HeroSection.astro; senza JS resta visibile).
+      // Atterrando su un'ancora (#servizi…) la pagina è già oltre la Hero: nessun gate.
+      if (!location.hash) document.documentElement.classList.add('nav-gate');
+    </script>
     <noscript
       ><style is:inline>
         [data-animate] {

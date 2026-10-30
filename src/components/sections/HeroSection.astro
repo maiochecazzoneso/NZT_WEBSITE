@@ -1,9 +1,11 @@
 ---
 // src/components/sections/HeroSection.astro
+// v2.1: primo schermo senza testo (solo pillola + "Scroll to Open"); stage-2 e navbar animati da src/lib/hero-scroll.ts,
+// indipendente dall'isola WebGL. h1 e copy del primo schermo da definire (punto aperto SEO).
 import HeroPillScrollytelling from '@interactive/HeroPillScrollytelling';
 ---
 
-<!-- Fallback SEO e No-JS: se JS è disattivato, entrambi i blocchi testuali sono subito visibili -->
+<!-- Fallback SEO e No-JS: se JS è disattivato, il blocco testuale (stage-2) è subito visibile -->
 <noscript>
   <style>
     #hero-scrolly-wrapper {
@@ -11,21 +13,18 @@ import HeroPillScrollytelling from '@interactive/HeroPillScrollytelling';
       min-height: 100vh;
       padding: 8rem 0;
     }
-    #hero-stage-1,
-    #hero-stage-2 {
-      opacity: 1 !important;
-      transform: none !important;
-      position: relative !important;
-      pointer-events: auto !important;
-      margin-bottom: 3rem;
-    }
-    /* Senza JS il box sticky (h-screen + overflow-hidden) taglierebbe stage-1 + stage-2 impilati */
+    /* Senza JS il box sticky (h-screen + overflow-hidden) taglierebbe il testo sui viewport bassi */
     #hero-scrolly-wrapper > div {
       height: auto !important;
     }
     /* stage-2 centrato: con position relative, inset-x-6 lo sposterebbe di 1.5rem a destra; */
     /* scala piena: in Tailwind v4 scale-[0.78] usa la proprietà CSS scale, ignorata da transform */
     #hero-stage-2 {
+      opacity: 1 !important;
+      transform: none !important;
+      position: relative !important;
+      pointer-events: auto !important;
+      margin-bottom: 3rem;
       left: auto !important;
       right: auto !important;
       scale: none !important;
@@ -61,28 +60,6 @@ import HeroPillScrollytelling from '@interactive/HeroPillScrollytelling';
     <div
       class="pointer-events-none relative z-20 mx-auto flex w-full max-w-5xl flex-col items-center justify-center px-6 text-center"
     >
-      <!-- FASE 1 (Visibile all'ingresso a 0ms per LCP perfetto): Titolo Monumentale -->
-      <div id="hero-stage-1" class="gpu-accelerated flex flex-col items-center space-y-6">
-        <div
-          class="inline-flex items-center gap-2.5 rounded-full border border-[var(--border-subtle)] bg-[#0c0c0e]/80 px-4 py-1.5 backdrop-blur-md"
-        >
-          <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-white"></span>
-          <span class="font-mono text-[11px] tracking-[0.2em] text-[var(--text-muted)] uppercase">
-            NZT Solutions — Next-Gen Engineering
-          </span>
-        </div>
-
-        <h1
-          class="text-metallic max-w-4xl text-4xl leading-[1.05] font-semibold tracking-tight sm:text-6xl lg:text-7xl"
-        >
-          Sblocca il vero potenziale digitale della tua azienda.
-        </h1>
-
-        <p class="max-w-xl text-base font-normal text-[var(--text-muted)] sm:text-lg">
-          Scorri per attivare l'architettura ad alte prestazioni.
-        </p>
-      </div>
-
       <!-- FASE 2 (Emerge dall'interno della Pillola quando si apre tra il 30% e il 75% dello scroll) -->
       <div
         id="hero-stage-2"
@@ -138,3 +115,72 @@ import HeroPillScrollytelling from '@interactive/HeroPillScrollytelling';
     </div>
   </div>
 </section>
+
+<style is:global>
+  /* Navbar nascosta al primo paint finché la pillola non ha concluso il fly-out (solo pagine con la Hero: questo
+     CSS viaggia con il componente). html.nav-gate è impostata in <head> da MainLayout solo con JS attivo e senza
+     #ancora nell'URL; la rimuovono src/lib/hero-scroll.ts (da lì in poi la navbar è guidata da GSAP) o lo script
+     qui sotto se il modulo non si carica. Niente pointer-events: visibility hidden basta e il failsafe lo annulla. */
+  html.nav-gate #site-header {
+    opacity: 0;
+    visibility: hidden;
+    /* Failsafe solo CSS: se nessuno script rimuove il gate, la navbar ricompare comunque dopo 10 s */
+    animation: nav-gate-failsafe 0.6s cubic-bezier(0.16, 1, 0.3, 1) 10s both;
+    animation-play-state: running !important;
+  }
+
+  @keyframes nav-gate-failsafe {
+    to {
+      opacity: 1;
+      visibility: visible;
+    }
+  }
+</style>
+
+<script>
+  // Avvio della timeline DOM della Hero (src/lib/hero-scroll.ts): import dinamico dopo load + idle, come gsap-init
+  // in MainLayout, così GSAP (chunk condiviso) resta fuori dal budget JS iniziale (< 35 KB). Indipendente dall'isola 3D.
+  const NAV_GATE_CLASS = 'nav-gate';
+  const wrapper = document.getElementById('hero-scrolly-wrapper');
+  const ungate = () => document.documentElement.classList.remove(NAV_GATE_CLASS);
+  // Failsafe se il modulo non si carica: navbar visibile e testi della Hero statici e cliccabili (come senza JS).
+  // pointer-events inline come fa la timeline: il contenitore padre è pointer-events-none (proprietà ereditata).
+  const failsafe = () => {
+    ungate();
+    const stage2Text = document.getElementById('hero-stage-2');
+    if (stage2Text)
+      Object.assign(stage2Text.style, { opacity: '1', scale: '1', pointerEvents: 'auto' });
+  };
+
+  if (!wrapper) {
+    ungate();
+  } else {
+    // Prima che il modulo sia pronto: se la pagina si apre (o viene ricaricata) già oltre la Hero, navbar visibile
+    const onScroll = () => {
+      if (wrapper.getBoundingClientRect().bottom <= window.innerHeight + 1) ungate();
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+
+    const boot = () => {
+      import('@/lib/hero-scroll')
+        .then(({ initHeroScroll }) => initHeroScroll(wrapper))
+        .catch(failsafe)
+        .finally(() => window.removeEventListener('scroll', onScroll));
+    };
+
+    const schedule = () => {
+      if ('requestIdleCallback' in window) {
+        window.requestIdleCallback(boot, { timeout: 2000 });
+      } else {
+        setTimeout(boot, 200);
+      }
+    };
+
+    if (document.readyState === 'complete') {
+      schedule();
+    } else {
+      window.addEventListener('load', schedule, { once: true });
+    }
+  }
+</script>

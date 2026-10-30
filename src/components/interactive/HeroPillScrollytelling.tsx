@@ -1,7 +1,9 @@
 // src/components/interactive/HeroPillScrollytelling.tsx
+// v2.1: solo la scena 3D. La timeline DOM (testi, bagliore, hint, navbar) è in src/lib/hero-scroll.ts, così un
+// errore WebGL non tocca i contenuti; l'ambiente luminoso è procedurale (Lightformer): 0 byte scaricati.
 import React, { useRef, useState, useEffect } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { Environment, ContactShadows } from '@react-three/drei';
+import { Environment, Lightformer, ContactShadows } from '@react-three/drei';
 import * as THREE from 'three';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
@@ -9,6 +11,23 @@ import { useStore } from '@nanostores/react';
 import { animationsPausedStore } from '@/lib/stores/uiStore';
 
 gsap.registerPlugin(ScrollTrigger);
+
+// Se WebGL non è disponibile o la scena lancia un errore, r3f lo rilancia fuori dal <Canvas>: qui viene
+// intercettato e la scena sparisce in silenzio (il contenitore resta a opacity 0), senza smontare l'isola.
+class CanvasErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
 
 interface SceneProps {
   isPaused: boolean;
@@ -273,82 +292,23 @@ export default function HeroPillScrollytelling() {
     return () => window.removeEventListener('pointermove', handlePointerMove);
   }, []);
 
-  // 2. Orchestrazione GSAP ScrollTrigger (Sincronizza 3D + Testi DOM in Astro)
+  // 2. Progresso di scroll della Hero per useFrame: ScrollTrigger dedicato, solo onUpdate (nessun tween DOM).
+  // Stessi trigger/start/end della v2.0 → stesso self.progress grezzo (non smussato dallo scrub).
   useEffect(() => {
     const wrapper = document.getElementById('hero-scrolly-wrapper');
-    const stage1Text = document.getElementById('hero-stage-1');
-    const stage2Text = document.getElementById('hero-stage-2');
-    const coreGlowDom = document.getElementById('hero-core-glow');
-    const scrollHint = document.getElementById('hero-scroll-hint');
-
     if (!wrapper) return;
 
-    const ctx = gsap.context(() => {
-      const tl = gsap.timeline({
-        scrollTrigger: {
-          trigger: wrapper,
-          start: 'top top',
-          end: 'bottom bottom',
-          scrub: 1.2,
-          onUpdate: (self) => {
-            scrollProgress.current = self.progress;
-          },
-        },
-      });
-
-      // Fase 1 (0.00 -> 0.28): Il titolo iniziale si ingrandisce leggermente e sfuma via
-      if (stage1Text && scrollHint) {
-        tl.to(
-          [stage1Text, scrollHint],
-          {
-            scale: 1.08,
-            opacity: 0,
-            y: -30,
-            ease: 'power2.inOut',
-            duration: 0.28,
-          },
-          0,
-        );
-      }
-
-      // Bagliore radiale bianco che si espande all'apertura della pillola
-      if (coreGlowDom) {
-        tl.fromTo(
-          coreGlowDom,
-          { scale: 0.5, opacity: 0.15 },
-          { scale: 1.6, opacity: 0.45, duration: 0.45, ease: 'power2.out' },
-          0.2,
-        ).to(coreGlowDom, { opacity: 0.15, scale: 1.2, duration: 0.35 }, 0.65);
-      }
-
-      // Fase 2 (0.30 -> 0.72): I nuovi testi + CTA emergono dal cuore della pillola aperta
-      if (stage2Text) {
-        tl.fromTo(
-          stage2Text,
-          {
-            scale: 0.78,
-            opacity: 0,
-            y: 24,
-          },
-          {
-            scale: 1,
-            opacity: 1,
-            y: 0,
-            ease: 'power3.out',
-            duration: 0.42,
-            onStart: () => {
-              stage2Text.style.pointerEvents = 'auto';
-            },
-            onReverseComplete: () => {
-              stage2Text.style.pointerEvents = 'none';
-            },
-          },
-          0.3,
-        );
-      }
+    const trigger = ScrollTrigger.create({
+      trigger: wrapper,
+      start: 'top top',
+      end: 'bottom bottom',
+      onUpdate: (self) => {
+        scrollProgress.current = self.progress;
+      },
     });
+    scrollProgress.current = trigger.progress;
 
-    return () => ctx.revert();
+    return () => trigger.kill();
   }, []);
 
   // 3. Spegnimento automatico WebGL quando la Hero esce dallo schermo
@@ -372,34 +332,44 @@ export default function HeroPillScrollytelling() {
       }`}
       aria-hidden="true"
     >
-      <Canvas
-        dpr={[1, 1.5]}
-        frameloop={shouldPause ? 'demand' : 'always'}
-        camera={{ position: [0, 0, 4.0], fov: 35 }}
-        gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
-        onCreated={() => setIsReady(true)}
-      >
-        <ambientLight intensity={0.45} color="#ffffff" />
-        <directionalLight position={[-4, 5, 3]} intensity={2.4} color="#ffffff" />
-        <directionalLight position={[4, -4, -2]} intensity={0.9} color="#a1a1aa" />
+      <CanvasErrorBoundary>
+        <Canvas
+          dpr={[1, 1.5]}
+          frameloop={shouldPause ? 'demand' : 'always'}
+          camera={{ position: [0, 0, 4.0], fov: 35 }}
+          gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
+          onCreated={() => setIsReady(true)}
+        >
+          <ambientLight intensity={0.45} color="#ffffff" />
+          <directionalLight position={[-4, 5, 3]} intensity={2.4} color="#ffffff" />
+          <directionalLight position={[4, -4, -2]} intensity={0.9} color="#a1a1aa" />
 
-        <Environment preset="studio" environmentIntensity={0.45} />
+          {/* Studio procedurale monocromatico (key / fill / rim / top + rimbalzo dal basso): nessun file HDR */}
+          <Environment resolution={256} environmentIntensity={0.45}>
+            <color attach="background" args={['#52525b']} />
+            <Lightformer form="rect" intensity={6} position={[-3, 2.5, 3]} scale={[4, 3, 1]} />
+            <Lightformer form="rect" intensity={2} position={[4, 0.5, 1.5]} scale={[2.5, 5, 1]} />
+            <Lightformer form="rect" intensity={3} position={[0, 1.5, -4]} scale={[7, 1.2, 1]} />
+            <Lightformer form="rect" intensity={3} position={[0, 5, -0.5]} scale={[5, 5, 1]} />
+            <Lightformer form="circle" intensity={0.6} position={[0, -4, 0]} scale={[6, 6, 1]} />
+          </Environment>
 
-        <ScrollyPillMesh
-          isPaused={shouldPause}
-          mouseNorm={mouseNorm}
-          scrollProgress={scrollProgress}
-        />
+          <ScrollyPillMesh
+            isPaused={shouldPause}
+            mouseNorm={mouseNorm}
+            scrollProgress={scrollProgress}
+          />
 
-        <ContactShadows
-          position={[0, -1.7, 0]}
-          opacity={0.45}
-          scale={6}
-          blur={2.6}
-          far={3.5}
-          color="#000000"
-        />
-      </Canvas>
+          <ContactShadows
+            position={[0, -1.7, 0]}
+            opacity={0.45}
+            scale={6}
+            blur={2.6}
+            far={3.5}
+            color="#000000"
+          />
+        </Canvas>
+      </CanvasErrorBoundary>
     </div>
   );
 }
