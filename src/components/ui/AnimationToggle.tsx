@@ -1,6 +1,6 @@
 // src/components/ui/AnimationToggle.tsx
 // Switch "Pausa/Attiva Animazioni" (stile pnote.it) — architettura tecnica §2.2/§4, architettura grafica §7 (check 3).
-// Agisce su animationsPausedStore: HeroPill3D passa a frameloop "demand", gsap-init.ts distrugge Lenis,
+// Agisce su animationsPausedStore: HeroPillScrollytelling passa a frameloop "demand", gsap-init.ts distrugge Lenis,
 // completa i reveal e imposta <html class="animations-paused"> (pausa di marquee e pulse CSS).
 import { useEffect, useState } from 'react';
 import { useStore } from '@nanostores/react';

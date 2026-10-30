@@ -1,79 +1,140 @@
 ---
 // src/components/sections/HeroSection.astro
-import HeroPill3D from '@interactive/HeroPill3D';
+import HeroPillScrollytelling from '@interactive/HeroPillScrollytelling';
 ---
 
-<section
-  class="relative flex min-h-[90vh] items-center overflow-hidden border-b border-[var(--border-subtle)] pt-24 pb-16"
->
-  <!-- Bagliore ambientale monocromatico statico (0 costo GPU) -->
-  <div
-    class="pointer-events-none absolute top-1/2 right-[12%] h-[420px] w-[420px] -translate-y-1/2 rounded-full blur-[130px]"
-    style="background: radial-gradient(circle, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0) 70%);"
-    aria-hidden="true"
-  >
-  </div>
+<!-- Fallback SEO e No-JS: se JS è disattivato, entrambi i blocchi testuali sono subito visibili -->
+<noscript>
+  <style>
+    #hero-scrolly-wrapper {
+      height: auto !important;
+      min-height: 100vh;
+      padding: 8rem 0;
+    }
+    #hero-stage-1,
+    #hero-stage-2 {
+      opacity: 1 !important;
+      transform: none !important;
+      position: relative !important;
+      pointer-events: auto !important;
+      margin-bottom: 3rem;
+    }
+    /* Senza JS il box sticky (h-screen + overflow-hidden) taglierebbe stage-1 + stage-2 impilati */
+    #hero-scrolly-wrapper > div {
+      height: auto !important;
+    }
+    /* stage-2 centrato: con position relative, inset-x-6 lo sposterebbe di 1.5rem a destra; */
+    /* scala piena: in Tailwind v4 scale-[0.78] usa la proprietà CSS scale, ignorata da transform */
+    #hero-stage-2 {
+      left: auto !important;
+      right: auto !important;
+      scale: none !important;
+    }
+    /* "Scroll to Open" non ha senso senza JS e si sovrapporrebbe alle CTA */
+    #hero-scroll-hint {
+      display: none !important;
+    }
+  </style>
+</noscript>
 
-  <div class="mx-auto w-full max-w-7xl px-6 lg:px-8">
-    <div class="grid grid-cols-1 items-center gap-12 lg:grid-cols-12">
-      <!-- COLONNA SINISTRA: Contenuto Testuale SEO (Renderizzato a 0ms) -->
-      <div class="z-10 space-y-8 lg:col-span-7">
+<section
+  id="hero-scrolly-wrapper"
+  class="relative h-[320vh] w-full border-b border-[var(--border-subtle)] bg-[var(--bg-primary)]"
+>
+  <!-- Viewport Fissato durante i 320vh di scroll -->
+  <div class="sticky top-0 flex h-screen w-full items-center justify-center overflow-hidden">
+    <!-- Bagliore centrale monocromatico modulato dallo scroll -->
+    <div
+      id="hero-core-glow"
+      class="gpu-accelerated pointer-events-none absolute h-[380px] w-[380px] rounded-full opacity-20 blur-[120px] sm:h-[520px] sm:w-[520px]"
+      style="background: radial-gradient(circle, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0) 70%);"
+      aria-hidden="true"
+    >
+    </div>
+
+    <!-- LIVELLO 1 (z-10): Scena 3D a Tutto Schermo (Idratata in client:idle) -->
+    <div class="absolute inset-0 z-10 flex items-center justify-center">
+      <HeroPillScrollytelling client:idle />
+    </div>
+
+    <!-- LIVELLO 2 (z-20): Testi SEO Centrati Sincronizzati con l'Apertura della Pillola -->
+    <div
+      class="pointer-events-none relative z-20 mx-auto flex w-full max-w-5xl flex-col items-center justify-center px-6 text-center"
+    >
+      <!-- FASE 1 (Visibile all'ingresso a 0ms per LCP perfetto): Titolo Monumentale -->
+      <div id="hero-stage-1" class="gpu-accelerated flex flex-col items-center space-y-6">
         <div
-          class="inline-flex items-center gap-2.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3.5 py-1.5"
+          class="inline-flex items-center gap-2.5 rounded-full border border-[var(--border-subtle)] bg-[#0c0c0e]/80 px-4 py-1.5 backdrop-blur-md"
         >
           <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-white"></span>
-          <span class="font-mono text-xs tracking-widest text-[var(--text-muted)] uppercase">
-            Architetture Software & Soluzioni Digitali
+          <span class="font-mono text-[11px] tracking-[0.2em] text-[var(--text-muted)] uppercase">
+            NZT Solutions — Next-Gen Engineering
           </span>
         </div>
 
         <h1
-          class="text-metallic text-4xl leading-[1.06] font-semibold tracking-tight sm:text-6xl lg:text-[4.25rem]"
+          class="text-metallic max-w-4xl text-4xl leading-[1.05] font-semibold tracking-tight sm:text-6xl lg:text-7xl"
         >
-          Ingegneria digitale ad alte prestazioni per il tuo business.
+          Sblocca il vero potenziale digitale della tua azienda.
         </h1>
 
-        <p
-          class="max-w-2xl text-lg leading-relaxed font-normal text-[var(--text-muted)] sm:text-xl"
+        <p class="max-w-xl text-base font-normal text-[var(--text-muted)] sm:text-lg">
+          Scorri per attivare l'architettura ad alte prestazioni.
+        </p>
+      </div>
+
+      <!-- FASE 2 (Emerge dall'interno della Pillola quando si apre tra il 30% e il 75% dello scroll) -->
+      <div
+        id="hero-stage-2"
+        class="gpu-accelerated pointer-events-none absolute inset-x-6 flex scale-[0.78] flex-col items-center justify-center space-y-8 opacity-0"
+      >
+        <div
+          class="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/[0.04] px-3.5 py-1 backdrop-blur-md"
         >
-          Progettiamo ecosistemi web, software su misura e automazioni aziendali con architettura
-          Zero-Latency. Estetica minimale, velocità estrema e posizionamento SEO nativo.
+          <span class="font-mono text-xs tracking-widest text-white uppercase">
+            Core Architecture Unlocked
+          </span>
+        </div>
+
+        <h2
+          class="text-metallic max-w-3xl text-3xl leading-[1.08] font-semibold tracking-tight sm:text-5xl lg:text-6xl"
+        >
+          Software su misura, Ecosistemi Web Zero-Latency & SEO Nativa.
+        </h2>
+
+        <p
+          class="max-w-2xl text-base leading-relaxed font-normal text-[var(--text-muted)] sm:text-xl"
+        >
+          Costruiamo piattaforme ultra-veloci progettate per dominare i motori di ricerca,
+          automatizzare i processi critici e convertire i visitatori in clienti.
         </p>
 
-        <div class="flex flex-wrap items-center gap-4 pt-2">
+        <div class="flex flex-wrap items-center justify-center gap-4 pt-2">
           <a
             href="#contatti"
-            class="inline-flex items-center justify-center rounded-lg bg-white px-6 py-3.5 text-sm font-medium text-[#050505] transition-all duration-300 hover:-translate-y-0.5 hover:bg-zinc-200"
+            class="inline-flex items-center justify-center rounded-lg bg-white px-7 py-3.5 text-sm font-medium text-[#050505] shadow-[0_0_30px_rgba(255,255,255,0.2)] transition-all duration-300 hover:-translate-y-0.5 hover:bg-zinc-200"
           >
             Inizia un Progetto
           </a>
           <a
             href="#servizi"
-            class="inline-flex items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-3.5 text-sm font-medium text-white transition-all duration-300 hover:border-[var(--border-hover)] hover:bg-[var(--bg-surface-elevated)]"
+            class="inline-flex items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[#0c0c0e]/90 px-7 py-3.5 text-sm font-medium text-white backdrop-blur-md transition-all duration-300 hover:border-[var(--border-hover)] hover:bg-[var(--bg-surface-elevated)]"
           >
-            Esplora l'Architettura
+            Esplora i Servizi
           </a>
         </div>
       </div>
+    </div>
 
-      <!-- COLONNA DESTRA: Contenitore ad Altezza Fissa (CLS = 0.00) per la Pillola 3D -->
-      <div
-        class="relative flex h-[420px] w-full items-center justify-center sm:h-[500px] lg:col-span-5"
-      >
-        <!-- Sagoma statica istantanea visibile prima dell'idratazione WebGL -->
-        <div
-          class="pointer-events-none absolute inset-0 flex items-center justify-center opacity-30"
-          aria-hidden="true"
-        >
-          <div
-            class="h-56 w-24 -rotate-[25deg] rounded-full border border-white/15 bg-gradient-to-b from-white/10 via-zinc-900/40 to-black shadow-2xl"
-          >
-          </div>
-        </div>
-
-        <!-- Isola React 3D caricata solo quando il main thread è libero -->
-        <HeroPill3D client:idle />
-      </div>
+    <!-- Indicatore di Scroll Minimalista in Basso -->
+    <div
+      id="hero-scroll-hint"
+      class="pointer-events-none absolute bottom-8 left-1/2 z-20 flex -translate-x-1/2 flex-col items-center gap-2"
+    >
+      <span class="font-mono text-[10px] tracking-[0.25em] text-[var(--text-subtle)] uppercase">
+        Scroll to Open
+      </span>
+      <div class="h-9 w-[1px] bg-gradient-to-b from-white/50 to-transparent"></div>
     </div>
   </div>
 </section>
