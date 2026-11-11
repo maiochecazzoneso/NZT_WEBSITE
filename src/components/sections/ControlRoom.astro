@@ -1,0 +1,26 @@
+---
+// src/components/sections/ControlRoom.astro — Specifica Contenuti §3 Sezione 1 (parte interattiva)
+// Blocco subito dopo la Hero a particelle: isola HeroInteractiveMockup (client:visible, sta sotto i 360vh della
+// Hero). L'HTML statico mostra già i tre moduli nel loro stato completo: leggibili anche senza JS.
+import { HeroInteractiveMockup } from '@interactive/HeroInteractiveMockup';
+import { controlRoom } from '@/content/site';
+---
+
+<section
+  aria-labelledby="control-room-title"
+  class="border-b border-[var(--border-subtle)] py-20 sm:py-24"
+>
+  <div class="mx-auto max-w-7xl px-6 lg:px-8">
+    <div class="mb-10 max-w-3xl space-y-4" data-animate="fade-up">
+      <p class="font-mono text-xs tracking-widest text-[var(--text-muted)] uppercase">
+        {controlRoom.eyebrow}
+      </p>
+      <h2 id="control-room-title" class="text-h3 text-[#FAFAFA] sm:text-[1.75rem]">
+        {controlRoom.title}
+      </h2>
+    </div>
+    <div data-animate="fade-up">
+      <HeroInteractiveMockup client:visible />
+    </div>
+  </div>
+</section>

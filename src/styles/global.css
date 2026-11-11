@@ -109,36 +109,6 @@
   border-color: rgba(255, 255, 255, 0.2);
 }
 
-/* TrustBar (§5.2.2): marquee solo CSS, @keyframes su translate3d (compositing GPU) */
-@keyframes marquee {
-  from {
-    transform: translate3d(0, 0, 0);
-  }
-  to {
-    transform: translate3d(-50%, 0, 0);
-  }
-}
-
-.marquee {
-  overflow: hidden;
-  mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
-}
-
-.marquee-track {
-  display: flex;
-  width: max-content;
-  animation: marquee 40s linear infinite;
-  will-change: transform;
-}
-
-.marquee-group {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 4rem;
-  padding-right: 4rem;
-}
-
 /* Pausa globale (AnimationToggle / prefers-reduced-motion): classe su <html> impostata da src/lib/gsap-init.ts */
 .animations-paused *,
 .animations-paused *::before,
@@ -146,30 +116,8 @@
   animation-play-state: paused !important;
 }
 
-/* prefers-reduced-motion già prima del JS: marquee fermo e impaginato a capo, nessun pulse */
+/* prefers-reduced-motion già prima del JS: nessun pulse */
 @media (prefers-reduced-motion: reduce) {
-  .marquee {
-    mask-image: none;
-  }
-
-  .marquee-track {
-    width: auto;
-    animation: none;
-  }
-
-  .marquee-group {
-    width: 100%;
-    flex-shrink: 1;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 1.5rem 3rem;
-    padding-right: 0;
-  }
-
-  .marquee-group[aria-hidden='true'] {
-    display: none;
-  }
-
   .animate-pulse {
     animation: none;
   }

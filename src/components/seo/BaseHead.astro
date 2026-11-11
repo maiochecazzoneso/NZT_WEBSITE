@@ -5,14 +5,14 @@ interface Props {
   image?: string;
 }
 
+import { defaultDescription } from '@/content/site';
+
 const SITE_NAME = 'NZT Solutions';
-// Default = sottotitolo Hero (architettura grafica §4.5) — da confermare
-const DEFAULT_DESCRIPTION =
-  'Progettiamo ecosistemi web, software su misura e automazioni aziendali con architettura Zero-Latency. Estetica minimale, velocità estrema e posizionamento SEO nativo.';
+const DEFAULT_TITLE = 'NZT Solutions — Software su misura, automazione AI e consulenza tecnica';
 
 const {
-  title = SITE_NAME,
-  description = DEFAULT_DESCRIPTION,
+  title = DEFAULT_TITLE,
+  description = defaultDescription,
   image = '/og-image.jpg',
 } = Astro.props;
 

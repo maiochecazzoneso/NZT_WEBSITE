@@ -1,46 +1,67 @@
 // src/content/services.ts
-// Servizi della Bento Grid (architettura tecnica §4, architettura grafica §5.2.4).
-// Titoli ricavati dal sottotitolo Hero (architettura grafica §4.5); descrizioni provvisorie.
+// Bento Grid dei servizi B2B (Specifica Contenuti §3 Sezione 4).
+// `id` coincide con il valore di selectedServiceStore che la CTA della card preimposta nel form contatti.
+import type { ServiceId } from './site';
 
-export type ServiceMockup = 'latency' | 'terminal' | 'flow';
+export type ServiceMockup = 'dashboard' | 'pipeline' | 'audit';
 export type ServiceLayout = 'wide' | 'narrow' | 'full';
 
 export interface Service {
-  /** Identificativo stabile: in futuro alimenterà selectedServiceStore / ContactForm (Step 4 e 6) */
-  id: string;
+  id: ServiceId;
   tag: string;
   title: string;
   description: string;
+  /** Esempi mostrati nel mockup UI della card */
+  examples: string[];
+  cta: string;
   mockup: ServiceMockup;
   layout: ServiceLayout;
 }
 
 export const services: Service[] = [
   {
-    id: 'web',
-    tag: 'Web', // PLACEHOLDER
-    title: 'Ecosistemi web', // PLACEHOLDER (dal sottotitolo Hero)
+    id: 'software-custom',
+    tag: 'Custom Software Development',
+    title: 'Costruiamo il software che sul mercato non esiste: il tuo.',
     description:
-      'Testo segnaposto: descrizione del servizio di progettazione di siti ed ecosistemi web, da sostituire con il copy definitivo.', // PLACEHOLDER
-    mockup: 'latency',
+      'Ogni azienda ha regole, eccezioni e calcoli che i gestionali standard non riescono a gestire. Progettiamo e sviluppiamo applicativi web su misura, portali clienti/fornitori, gestionali operativi interni e dashboard direzionali in tempo reale. Tu definisci come lavora la tua azienda; noi costruiamo lo strumento veloce, intuitivo e blindato che lo rende possibile.',
+    examples: [
+      'Gestionali di produzione custom',
+      'Portali B2B per reti vendita',
+      'Dashboard di controllo commesse e margini',
+    ],
+    cta: 'Parliamo del tuo software',
+    mockup: 'dashboard',
     layout: 'wide',
   },
   {
-    id: 'software',
-    tag: 'Software', // PLACEHOLDER
-    title: 'Software su misura', // PLACEHOLDER (dal sottotitolo Hero)
+    id: 'automazione-ai',
+    tag: 'AI Workflow Automation',
+    title: 'Innestiamo l’Intelligenza Artificiale nei tuoi ingranaggi quotidiani.',
     description:
-      'Testo segnaposto: descrizione del servizio di sviluppo software su misura, da sostituire con il copy definitivo.', // PLACEHOLDER
-    mockup: 'terminal',
+      'Analizziamo le operazioni ripetitive che rallentano i tuoi uffici e costruiamo pipeline automatiche che lavorano 24/7. Lettura e classificazione automatica di email e documenti in ingresso, estrazione dati da PDF o fatture, verifica incrociata tra ordini e bolle, generazione automatica di report e notifiche operative.',
+    examples: [
+      'Smistamento pratiche automatico',
+      'Data-entry zero-click via OCR/LLM',
+      'Sincronizzazione API tra software esistenti',
+    ],
+    cta: 'Automatizza un processo',
+    mockup: 'pipeline',
     layout: 'narrow',
   },
   {
-    id: 'automazioni',
-    tag: 'Automazioni', // PLACEHOLDER
-    title: 'Automazioni aziendali', // PLACEHOLDER (dal sottotitolo Hero)
+    id: 'consulenza-ai',
+    tag: 'Tech & AI Advisory',
+    title: 'Chiarezza ingegneristica prima di qualsiasi investimento.',
     description:
-      'Testo segnaposto: descrizione del servizio di automazione dei processi aziendali, da sostituire con il copy definitivo.', // PLACEHOLDER
-    mockup: 'flow',
+      'L’Intelligenza Artificiale offre opportunità enormi, ma è facile sprecare budget in strumenti inutili o insicuri. Entriamo nella tua realtà per mappare i processi, valutare la qualità e la sicurezza dei tuoi dati, calcolare il ritorno sull’investimento (ROI) reale di ogni automazione e disegnare la roadmap tecnica più solida per i tuoi obiettivi.',
+    examples: [
+      'Audit dei flussi di lavoro',
+      'Studio di fattibilità AI Locale vs Cloud',
+      'Progettazione architetturale',
+    ],
+    cta: 'Richiedi un Audit in azienda',
+    mockup: 'audit',
     layout: 'full',
   },
 ];
