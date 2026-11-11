@@ -6,6 +6,7 @@ let activeCard: HTMLElement | null = null;
 let pointerX = 0;
 let pointerY = 0;
 let frame = 0;
+let initialized = false;
 
 function update(): void {
   frame = 0;
@@ -16,6 +17,9 @@ function update(): void {
 }
 
 export function initSpotlight(): void {
+  // Idempotente: più sezioni della stessa pagina possono richiederlo
+  if (initialized) return;
+  initialized = true;
   // Solo con puntatore fine e hover reale: nessun lavoro inutile sui dispositivi touch
   if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
   document.addEventListener(

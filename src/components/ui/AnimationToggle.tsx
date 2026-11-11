@@ -1,7 +1,7 @@
 // src/components/ui/AnimationToggle.tsx
-// Switch "Pausa/Attiva Animazioni" (stile pnote.it) — architettura tecnica §2.2/§4, architettura grafica §7 (check 3).
+// Switch "Animazioni Interfaccia: Attive / Disattivate" (stile pnote.it, Specifica Contenuti §5.1) — architettura tecnica §2.2/§4, architettura grafica §7 (check 3).
 // Agisce su animationsPausedStore: HeroPillScrollytelling passa a frameloop "demand", gsap-init.ts distrugge Lenis,
-// completa i reveal e imposta <html class="animations-paused"> (pausa di marquee e pulse CSS).
+// completa i reveal e imposta <html class="animations-paused"> (pausa dei pulse CSS).
 import { useEffect, useState } from 'react';
 import { useStore } from '@nanostores/react';
 import { Pause, Play } from 'lucide-react';
@@ -25,10 +25,14 @@ export function AnimationToggle() {
       type="button"
       variant="ghost"
       size="sm"
+      role="switch"
+      aria-checked={!isPaused}
+      className="-ml-3.5"
       onClick={() => animationsPausedStore.set(!animationsPausedStore.get())}
     >
       <Icon aria-hidden="true" className="h-3.5 w-3.5" strokeWidth={1.75} />
-      {isPaused ? 'Attiva animazioni' : 'Pausa animazioni'}
+      Animazioni interfaccia:
+      <span className="text-[#FAFAFA]">{isPaused ? 'Disattivate' : 'Attive'}</span>
     </Button>
   );
 }

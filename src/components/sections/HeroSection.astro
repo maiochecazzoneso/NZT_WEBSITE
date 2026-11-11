@@ -1,13 +1,14 @@
 ---
 // src/components/sections/HeroSection.astro
 // v3.0 particle-to-text: primo schermo senza testo (solo pillola con le particelle nel nucleo + "Scroll to Open").
-// Le particelle (isola WebGL) compongono "ARCHITETTURE / ZERO-LATENCY" esattamente sopra l'h2 reale, che subentra
-// con un cross-fade (timeline DOM in src/lib/hero-scroll.ts, indipendente dall'isola). h1 e copy del primo schermo
-// da definire (punto aperto SEO).
+// Le particelle (isola WebGL) compongono "ZERO ATTRITO / OPERATIVO" esattamente sopra il testo reale, che subentra
+// con un cross-fade (timeline DOM in src/lib/hero-scroll.ts, indipendente dall'isola); con esso emergono badge,
+// h1 SEO, sottotitolo e CTA (Specifica Contenuti §3 Sezione 1).
 import HeroPillScrollytelling from '@interactive/HeroPillScrollytelling';
+import { hero } from '@/content/site';
 ---
 
-<!-- Fallback SEO e No-JS: se JS è disattivato, headline, sottotitolo e CTA (stage-2) sono subito visibili -->
+<!-- Fallback SEO e No-JS: se JS è disattivato, headline, h1, sottotitolo e CTA (stage-2) sono subito visibili -->
 <noscript>
   <style>
     #hero-scrolly-wrapper {
@@ -67,49 +68,55 @@ import HeroPillScrollytelling from '@interactive/HeroPillScrollytelling';
       <!-- FASE 2 (composta dalle particelle tra il 20% e il 75% dello scroll, poi consolidata nel DOM) -->
       <div
         id="hero-stage-2"
-        class="gpu-accelerated pointer-events-none absolute inset-x-6 flex flex-col items-center justify-center space-y-6"
+        class="gpu-accelerated pointer-events-none absolute inset-x-6 flex flex-col items-center justify-center space-y-5 sm:space-y-6"
       >
         <div
           data-particle-subreveal
-          class="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/[0.04] px-3.5 py-1 opacity-0 backdrop-blur-md"
+          class="inline-flex max-w-full items-center gap-2 rounded-full border border-white/20 bg-white/[0.04] px-3.5 py-1 opacity-0 backdrop-blur-md"
         >
-          <span class="font-mono text-xs tracking-widest text-white uppercase">
-            Core Particle Synthesis Complete
+          <span class="font-mono text-[10px] tracking-widest text-white uppercase sm:text-xs">
+            {hero.badge}
           </span>
         </div>
 
-        <!-- Questo H2 combacia con le lettere "ARCHITETTURE / ZERO-LATENCY" composte dalle particelle 3D:
-             l'isola ne misura posizione, font e interlinea per campionare i punti target -->
-        <h2
+        <!-- Questo testo combacia con le lettere composte dalle particelle 3D: l'isola ne misura posizione, font e
+             interlinea per campionare i punti target (righe separate da <br />, da tenere brevi) -->
+        <p
           id="hero-stage-2-headline"
           class="text-metallic max-w-4xl text-4xl leading-[1.05] font-bold tracking-tight uppercase opacity-0 select-none sm:text-6xl lg:text-[4.5rem]"
         >
-          Architetture<br />Zero-Latency
-        </h2>
+          {hero.particleLines[0]}<br />{hero.particleLines[1]}
+        </p>
+
+        <h1
+          data-particle-subreveal
+          class="max-w-3xl text-xl leading-snug font-medium tracking-tight text-[#FAFAFA] opacity-0 sm:text-3xl"
+        >
+          {hero.title}
+        </h1>
 
         <p
           data-particle-subreveal
-          class="max-w-2xl pt-2 text-base leading-relaxed font-normal text-[var(--text-muted)] opacity-0 sm:text-xl"
+          class="max-w-2xl text-sm leading-relaxed font-normal text-[var(--text-muted)] opacity-0 sm:text-lg"
         >
-          Software su misura, ecosistemi web ad altissima velocità e posizionamento SEO nativo
-          progettati per dominare il tuo mercato.
+          {hero.subtitle}
         </p>
 
         <div
           data-particle-subreveal
-          class="flex flex-wrap items-center justify-center gap-4 pt-3 opacity-0"
+          class="flex flex-wrap items-center justify-center gap-3 pt-1 opacity-0 sm:gap-4"
         >
           <a
-            href="#contatti"
-            class="inline-flex items-center justify-center rounded-lg bg-white px-7 py-3.5 text-sm font-medium text-[#050505] shadow-[0_0_30px_rgba(255,255,255,0.22)] transition-all duration-300 hover:-translate-y-0.5 hover:bg-zinc-200"
+            href={hero.primaryCta.href}
+            class="inline-flex items-center justify-center rounded-lg bg-white px-6 py-3 text-sm font-medium text-[#050505] shadow-[0_0_30px_rgba(255,255,255,0.22)] transition-all duration-300 hover:-translate-y-0.5 hover:bg-zinc-200 sm:px-7 sm:py-3.5"
           >
-            Inizia un Progetto
+            {hero.primaryCta.label}
           </a>
           <a
-            href="#servizi"
-            class="inline-flex items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[#0c0c0e]/90 px-7 py-3.5 text-sm font-medium text-white backdrop-blur-md transition-all duration-300 hover:border-[var(--border-hover)] hover:bg-[var(--bg-surface-elevated)]"
+            href={hero.secondaryCta.href}
+            class="inline-flex items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[#0c0c0e]/90 px-6 py-3 text-sm font-medium text-white backdrop-blur-md transition-all duration-300 hover:border-[var(--border-hover)] hover:bg-[var(--bg-surface-elevated)] sm:px-7 sm:py-3.5"
           >
-            Esplora i Servizi
+            {hero.secondaryCta.label}
           </a>
         </div>
       </div>

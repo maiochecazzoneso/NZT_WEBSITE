@@ -1,35 +1,92 @@
 ---
-// src/components/sections/Footer.astro — architettura tecnica §4 (link legali, P.IVA, toggle animazioni)
+// src/components/sections/Footer.astro — Specifica Contenuti §5.1 (4 colonne + toggle animazioni)
 import { AnimationToggle } from '@ui/AnimationToggle';
 import { site } from '@/content/site';
 
 const year = new Date().getFullYear();
+
+interface FooterLink {
+  label: string;
+  href: string;
+  external?: boolean;
+}
+
+const columns: { title: string; links: FooterLink[] }[] = [
+  {
+    title: 'Servizi B2B',
+    links: [
+      { label: 'Sviluppo Software Custom', href: '/#servizi' },
+      { label: 'Automazione Flussi AI', href: '/#servizi' },
+      { label: 'Consulenza Tecnica AI', href: '/#servizi' },
+      { label: 'Il Nostro Metodo', href: '/#metodo' },
+    ],
+  },
+  {
+    title: 'Prodotti Proprietari',
+    links: [
+      { label: 'NZT Enterprise (RAG Locale)', href: '/nzt-enterprise' },
+      { label: 'Pnote Voice AI (Ristorazione)', href: site.pnoteUrl, external: true },
+      { label: 'Area Clienti', href: site.clientAreaUrl },
+    ],
+  },
+  {
+    title: 'Informazioni Legali',
+    links: [...site.legal.pages],
+  },
+];
 ---
 
 <footer class="border-t border-[var(--border-subtle)]">
   <div
-    class="mx-auto flex max-w-7xl flex-col gap-8 px-6 py-12 lg:flex-row lg:items-center lg:justify-between lg:px-8"
+    class="mx-auto grid max-w-7xl grid-cols-1 gap-12 px-6 py-16 sm:grid-cols-2 lg:grid-cols-12 lg:px-8"
   >
-    <div class="space-y-2">
-      <p class="text-sm font-semibold tracking-tight text-[#FAFAFA]">{site.name}</p>
-      <p class="font-mono text-xs tracking-widest text-[var(--text-muted)] uppercase">
-        © {year}
-        {site.name} · {site.legal.vat}
-      </p>
+    <div class="space-y-5 sm:col-span-2 lg:col-span-4">
+      <a href="/" class="text-base font-semibold tracking-tight text-[#FAFAFA]">{site.name}</a>
+      <p class="max-w-sm text-sm leading-relaxed text-[var(--text-muted)]">{site.tagline}</p>
+      <AnimationToggle client:visible />
     </div>
 
-    {/* PLACEHOLDER: pagine legali non ancora create → testo senza link (niente 404) */}
-    <ul class="flex flex-wrap gap-x-6 gap-y-2 text-sm text-[var(--text-muted)]">
-      {
-        site.legal.pages.map((legalPage) => (
-          <li>
-            {legalPage.label}{' '}
-            <span class="font-mono text-xs tracking-widest uppercase">(in arrivo)</span>
-          </li>
-        ))
-      }
-    </ul>
+    {
+      columns.map((column) => (
+        <nav aria-label={column.title} class="lg:col-span-2 lg:first-of-type:col-start-6">
+          <p class="font-mono text-xs tracking-widest text-[var(--text-subtle)] uppercase">
+            {column.title}
+          </p>
+          <ul class="mt-4 space-y-3 text-sm">
+            {column.links.map((link) => (
+              <li>
+                <a
+                  href={link.href}
+                  {...(link.external ? { target: '_blank', rel: 'noopener' } : {})}
+                  class="text-[var(--text-muted)] transition-colors duration-300 hover:text-[#FAFAFA]"
+                >
+                  {link.label}
+                  {link.external && <span aria-hidden="true"> ↗</span>}
+                </a>
+              </li>
+            ))}
+            {column.title === 'Informazioni Legali' && (
+              <li>
+                <a
+                  href={`mailto:${site.email}`}
+                  class="text-[var(--text-muted)] transition-colors duration-300 hover:text-[#FAFAFA]"
+                >
+                  {site.email}
+                </a>
+              </li>
+            )}
+          </ul>
+        </nav>
+      ))
+    }
+  </div>
 
-    <AnimationToggle client:visible />
+  <div class="border-t border-[var(--border-subtle)]">
+    <p
+      class="mx-auto max-w-7xl px-6 py-6 font-mono text-[11px] tracking-widest text-[var(--text-subtle)] uppercase lg:px-8"
+    >
+      © {year}
+      {site.name} — {site.legal.vat} — {site.legal.address}
+    </p>
   </div>
 </footer>

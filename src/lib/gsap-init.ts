@@ -4,7 +4,7 @@
 // - Lenis disattivato su touch (pointer: coarse) e con prefers-reduced-motion (architettura tecnica §2.2);
 // - pausa utente: Lenis distrutto (lenis.stop() in lenis 1.3 blocca anche la rotella del mouse) e reveal
 //   completati subito (gsap.globalTimeline.pause() lascerebbe invisibili gli elementi non ancora rivelati);
-// - stato di pausa riflesso su <html class="animations-paused"> per le animazioni CSS (marquee, pulse);
+// - stato di pausa riflesso su <html class="animations-paused"> per le animazioni CSS (pulse);
 // - numerazione MethodSection illuminata con ScrollTrigger toggleClass (architettura grafica §5.2.5).
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';

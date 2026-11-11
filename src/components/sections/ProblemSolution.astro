@@ -1,5 +1,7 @@
 ---
-// src/components/sections/ProblemSolution.astro — architettura grafica §5.2.3 (confronto architetturale)
+// src/components/sections/ProblemSolution.astro — Specifica Contenuti §3 Sezione 3 (#visione)
+// Confronto: modello tradizionale (bordo tratteggiato, indicatori spenti) vs approccio NZT Solutions
+// (.specular-card, indicatori bianchi). Ogni punto entra con il fade-up di GSAP ScrollTrigger (gsap-init.ts).
 import SectionHeader from '@sections/SectionHeader.astro';
 import { comparison, sectionCopy } from '@/content/site';
 
@@ -7,17 +9,14 @@ const { traditional, nzt } = comparison;
 ---
 
 <section
-  id="approccio"
-  aria-labelledby="approccio-title"
+  id="visione"
+  aria-labelledby="visione-title"
   class="border-b border-[var(--border-subtle)] py-24 sm:py-32"
 >
   <div class="mx-auto max-w-7xl px-6 lg:px-8">
-    <SectionHeader id="approccio-title" {...sectionCopy.problem} />
+    <SectionHeader id="visione-title" {...sectionCopy.vision} />
 
     <div class="mt-16 grid grid-cols-1 gap-6 lg:grid-cols-2">
-      {
-        /* Sinistra: sfondo #08080A, bordo tratteggiato rgba(255,255,255,0.06), indicatori #52525B */
-      }
       <article
         data-animate="fade-up"
         class="rounded-2xl border border-dashed border-white/[0.06] bg-[#08080A] p-6 sm:p-8"
@@ -27,28 +26,29 @@ const { traditional, nzt } = comparison;
         >
           {traditional.badge}
         </span>
-        <h3 class="mt-6 text-h3 text-[#FAFAFA]">{traditional.title}</h3>
-        <p class="mt-3 leading-relaxed text-[var(--text-muted)]">{traditional.description}</p>
-        <dl
+        <h3 class="mt-6 text-h3 text-[var(--text-muted)]">{traditional.title}</h3>
+        <ul
           class="mt-8 divide-y divide-dashed divide-white/[0.06] border-y border-dashed border-white/[0.06]"
         >
           {
-            traditional.metrics.map((metric) => (
-              <div class="flex items-center justify-between gap-4 py-4">
-                <dt class="flex items-center gap-3 font-mono text-xs tracking-widest text-[var(--text-muted)] uppercase">
-                  <span aria-hidden="true" class="h-1.5 w-1.5 rounded-full bg-[#52525B]" />
-                  {metric.label}
-                </dt>
-                <dd class="font-mono text-sm text-[var(--text-muted)]">{metric.value}</dd>
-              </div>
+            traditional.points.map((point) => (
+              <li data-animate="fade-up" class="flex gap-4 py-5">
+                <span
+                  aria-hidden="true"
+                  class="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[#52525B]"
+                />
+                <div>
+                  <h4 class="font-medium text-[#D4D4D8]">{point.title}</h4>
+                  <p class="mt-1.5 text-sm leading-relaxed text-[var(--text-muted)]">
+                    {point.text}
+                  </p>
+                </div>
+              </li>
             ))
           }
-        </dl>
+        </ul>
       </article>
 
-      {
-        /* Destra: .specular-card, bordo continuo rgba(255,255,255,0.20), badge bianco, metriche monospace */
-      }
       <article
         data-animate="fade-up"
         class="specular-card specular-card-strong rounded-2xl p-6 sm:p-8"
@@ -59,22 +59,23 @@ const { traditional, nzt } = comparison;
           {nzt.badge}
         </span>
         <h3 class="mt-6 text-h3 text-[#FAFAFA]">{nzt.title}</h3>
-        <p class="mt-3 leading-relaxed text-[var(--text-muted)]">{nzt.description}</p>
-        <dl
+        <ul
           class="mt-8 divide-y divide-[var(--border-subtle)] border-y border-[var(--border-subtle)]"
         >
           {
-            nzt.metrics.map((metric) => (
-              <div class="flex items-center justify-between gap-4 py-4">
-                <dt class="flex items-center gap-3 font-mono text-xs tracking-widest text-[#FAFAFA] uppercase">
-                  <span aria-hidden="true" class="h-1.5 w-1.5 rounded-full bg-white" />
-                  {metric.label}
-                </dt>
-                <dd class="font-mono text-sm text-[#FAFAFA]">{metric.value}</dd>
-              </div>
+            nzt.points.map((point) => (
+              <li data-animate="fade-up" class="flex gap-4 py-5">
+                <span aria-hidden="true" class="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-white" />
+                <div>
+                  <h4 class="font-medium text-[#FAFAFA]">{point.title}</h4>
+                  <p class="mt-1.5 text-sm leading-relaxed text-[var(--text-muted)]">
+                    {point.text}
+                  </p>
+                </div>
+              </li>
             ))
           }
-        </dl>
+        </ul>
       </article>
     </div>
   </div>

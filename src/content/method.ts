@@ -1,5 +1,5 @@
 // src/content/method.ts
-// Fasi del metodo di lavoro (MethodSection, architettura grafica §5.2.5: numerazione 01–04).
+// Fasi del metodo di lavoro (Specifica Contenuti §3 Sezione 6, numerazione 01–04 generata dal componente).
 
 export interface MethodStep {
   title: string;
@@ -8,23 +8,23 @@ export interface MethodStep {
 
 export const methodSteps: MethodStep[] = [
   {
-    title: 'Analisi', // PLACEHOLDER
+    title: 'Immersione nel tuo Flusso',
     description:
-      'Testo segnaposto: descrizione della fase di analisi, da sostituire con il copy definitivo.', // PLACEHOLDER
+      'Non partiamo dal codice, partiamo dal tuo lavoro. Analizziamo come si muovono le informazioni oggi nella tua azienda e dove si generano rallentamenti, colli di bottiglia o errori.',
   },
   {
-    title: 'Progettazione', // PLACEHOLDER
+    title: 'Architettura & Prototipo Visivo',
     description:
-      'Testo segnaposto: descrizione della fase di progettazione, da sostituire con il copy definitivo.', // PLACEHOLDER
+      'Disegniamo la soluzione tecnica più snella ed efficace. Prima di sviluppare l’intero sistema, ti mostriamo i flussi e le interfacce per validare insieme ogni passaggio.',
   },
   {
-    title: 'Sviluppo', // PLACEHOLDER
+    title: 'Sviluppo Modulare & Integrazione',
     description:
-      'Testo segnaposto: descrizione della fase di sviluppo, da sostituire con il copy definitivo.', // PLACEHOLDER
+      'Scriviamo il software e configuriamo i modelli AI in ambienti sicuri, collegandoci ai tuoi strumenti attuali senza mai bloccare l’operatività dei tuoi uffici.',
   },
   {
-    title: 'Rilascio', // PLACEHOLDER
+    title: 'Rilascio, Formazione e Supporto Continuo',
     description:
-      'Testo segnaposto: descrizione della fase di rilascio, da sostituire con il copy definitivo.', // PLACEHOLDER
+      'Mettiamo il sistema in produzione, affianchiamo il tuo personale nell’utilizzo quotidiano e monitoriamo le prestazioni nel tempo.',
   },
 ];

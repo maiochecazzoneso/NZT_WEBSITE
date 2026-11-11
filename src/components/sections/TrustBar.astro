@@ -1,38 +1,30 @@
 ---
-// src/components/sections/TrustBar.astro — architettura grafica §5.2.2, tecnica §5 (CSS puro, 0 KB JS)
-// Solo testo per ora (tecnologie + performance budget): i loghi arriveranno in seguito.
-import { performanceBudget, trustStack } from '@/content/site';
-
-const items = [
-  ...trustStack.map((name) => ({ text: name, mono: false })),
-  ...performanceBudget.map((metric) => ({ text: `${metric.label} ${metric.value}`, mono: true })),
-];
-// Due copie identiche: la traslazione -50% chiude il loop senza salti; la seconda è nascosta alle tecnologie assistive
-const copies = [0, 1];
+// src/components/sections/TrustBar.astro — Specifica Contenuti §3 Sezione 2 (Pilastri tecnologici)
+// Striscia statica a 4 colonne (0 KB JS): pilastro in evidenza + riga di spiegazione.
+import { trustPillars } from '@/content/site';
 ---
 
-<section
-  aria-label="Tecnologie e obiettivi di performance"
-  class="border-b border-[var(--border-subtle)] py-10"
->
-  <div class="marquee">
-    <div class="marquee-track">
-      {
-        copies.map((copy) => (
-          <ul class="marquee-group" aria-hidden={copy === 1 ? 'true' : undefined}>
-            {items.map((item) => (
-              <li
-                class:list={[
-                  'text-2xl whitespace-nowrap text-[#71717A] transition-colors duration-300 ease-out-expo hover:text-[#FAFAFA]',
-                  item.mono ? 'font-mono' : 'font-medium tracking-tight',
-                ]}
-              >
-                {item.text}
-              </li>
-            ))}
-          </ul>
-        ))
-      }
-    </div>
-  </div>
+<section aria-label="I pilastri di NZT Solutions" class="border-b border-[var(--border-subtle)]">
+  <ul
+    class="mx-auto grid max-w-7xl grid-cols-1 divide-y divide-[var(--border-subtle)] sm:grid-cols-2 sm:divide-y-0 lg:grid-cols-4 lg:divide-x"
+  >
+    {
+      trustPillars.map((pillar, index) => (
+        <li
+          data-animate="fade-up"
+          class:list={[
+            'px-6 py-8 lg:px-8 lg:py-10',
+            index % 2 === 1 && 'sm:border-l sm:border-[var(--border-subtle)] lg:border-l-0',
+            index > 1 && 'sm:border-t sm:border-[var(--border-subtle)] lg:border-t-0',
+          ]}
+        >
+          <p class="flex items-center gap-2.5 text-base font-medium tracking-tight text-[#FAFAFA]">
+            <span aria-hidden="true" class="h-1.5 w-1.5 shrink-0 rounded-full bg-white" />
+            {pillar.title}
+          </p>
+          <p class="mt-2 pl-4 text-sm leading-relaxed text-[var(--text-muted)]">{pillar.text}</p>
+        </li>
+      ))
+    }
+  </ul>
 </section>

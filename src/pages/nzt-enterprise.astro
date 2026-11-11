@@ -1,0 +1,117 @@
+---
+// Scheda prodotto NZT Enterprise (Specifica Contenuti §4). Riusa MainLayout, Navbar, CtaSection (form
+// preimpostato su 'nzt-enterprise') e Footer. Nessuna Hero 3D: pagina statica, 0 KB JS oltre a form e toggle.
+import MainLayout from '@/layouts/MainLayout.astro';
+import Navbar from '@sections/Navbar.astro';
+import SectionHeader from '@sections/SectionHeader.astro';
+import CtaSection from '@sections/CtaSection.astro';
+import Footer from '@sections/Footer.astro';
+import { buttonVariants } from '@ui/Button';
+import { enterprisePage } from '@/content/products';
+
+const { meta, hero, innovation, useCases, cta } = enterprisePage;
+---
+
+<MainLayout title={meta.title} description={meta.description}>
+  <Navbar />
+  <main>
+    {/* Blocco 1 — Hero prodotto */}
+    <section
+      aria-labelledby="enterprise-title"
+      class="relative overflow-hidden border-b border-[var(--border-subtle)] pt-32 pb-24 sm:pt-40 sm:pb-32"
+    >
+      <div
+        aria-hidden="true"
+        class="pointer-events-none absolute -top-40 left-1/2 h-[520px] w-[720px] -translate-x-1/2 rounded-full opacity-40 blur-[140px]"
+        style="background: radial-gradient(circle, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0) 70%);"
+      >
+      </div>
+      <div class="relative mx-auto max-w-5xl px-6 lg:px-8">
+        <a
+          href={hero.backLink.href}
+          class="inline-flex items-center gap-2 text-sm text-[var(--text-muted)] transition-colors hover:text-[#FAFAFA]"
+        >
+          <span aria-hidden="true">←</span>
+          {hero.backLink.label}
+        </a>
+        <p
+          class="mt-10 inline-flex rounded-full border border-white/20 bg-white/[0.04] px-3.5 py-1 font-mono text-[10px] tracking-widest text-white uppercase sm:text-xs"
+        >
+          {hero.badge}
+        </p>
+        <h1
+          id="enterprise-title"
+          class="text-metallic mt-6 text-4xl leading-[1.08] font-semibold tracking-tight sm:text-5xl lg:text-6xl"
+        >
+          {hero.title}
+        </h1>
+        <p class="mt-8 max-w-3xl text-lead text-[var(--text-muted)]">{hero.subtitle}</p>
+        <a
+          href={hero.cta.href}
+          class={buttonVariants({
+            variant: 'primary',
+            size: 'lg',
+            className: 'mt-10 h-auto min-h-12 py-3 text-center',
+          })}
+        >
+          {hero.cta.label}
+        </a>
+      </div>
+    </section>
+
+    {/* Blocco 2 — Innovazione tecnologica */}
+    <section
+      aria-labelledby="innovazione-title"
+      class="border-b border-[var(--border-subtle)] py-24 sm:py-32"
+    >
+      <div class="mx-auto max-w-7xl px-6 lg:px-8">
+        <SectionHeader id="innovazione-title" {...innovation} />
+        <ol class="mt-16 grid grid-cols-1 gap-6 lg:grid-cols-3">
+          {
+            innovation.pillars.map((pillar, index) => (
+              <li data-animate="fade-up" class="specular-card flex flex-col rounded-2xl p-6 sm:p-8">
+                <span class="font-mono text-5xl leading-none text-zinc-700">
+                  {String(index + 1).padStart(2, '0')}
+                </span>
+                <h3 class="mt-8 text-h3 text-[#FAFAFA]">{pillar.title}</h3>
+                <p class="mt-4 leading-relaxed text-[var(--text-muted)]">{pillar.text}</p>
+              </li>
+            ))
+          }
+        </ol>
+      </div>
+    </section>
+
+    {/* Blocco 3 — Casi d'uso */}
+    <section
+      aria-labelledby="casi-title"
+      class="border-b border-[var(--border-subtle)] py-24 sm:py-32"
+    >
+      <div class="mx-auto max-w-7xl px-6 lg:px-8">
+        <SectionHeader id="casi-title" eyebrow={useCases.eyebrow} title={useCases.title} />
+        <div class="mt-16 grid grid-cols-1 gap-6 lg:grid-cols-3">
+          {
+            useCases.cards.map((card) => (
+              <article
+                data-animate="fade-up"
+                class="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 sm:p-8"
+              >
+                <h3 class="text-h3 text-[#FAFAFA]">{card.title}</h3>
+                <p class="mt-4 leading-relaxed text-[var(--text-muted)]">{card.text}</p>
+              </article>
+            ))
+          }
+        </div>
+      </div>
+    </section>
+
+    <CtaSection copy={cta} defaultService="nzt-enterprise" />
+  </main>
+  <Footer />
+</MainLayout>
+
+<script>
+  import { initSpotlight } from '@/lib/spotlight';
+
+  initSpotlight();
+</script>
