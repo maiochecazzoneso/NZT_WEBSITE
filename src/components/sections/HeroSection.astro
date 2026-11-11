@@ -2,8 +2,8 @@
 // src/components/sections/HeroSection.astro
 // v3.0 particle-to-text: primo schermo senza testo (solo pillola con le particelle nel nucleo + indicatore di scroll).
 // Le particelle (isola WebGL) compongono "ZERO ATTRITO / OPERATIVO" esattamente sopra il testo reale, che subentra
-// con un cross-fade (timeline DOM in src/lib/hero-scroll.ts, indipendente dall'isola); con esso emergono badge,
-// h1 SEO, sottotitolo e CTA (Specifica Contenuti §3 Sezione 1).
+// con un cross-fade (timeline DOM in src/lib/hero-scroll.ts, indipendente dall'isola); con esso emergono solo
+// l'h1 SEO e le due CTA (Direttive refactoring §2.A: nessun badge, nessun sottotitolo).
 import HeroPillScrollytelling from '@interactive/HeroPillScrollytelling';
 import { hero } from '@/content/site';
 ---
@@ -68,17 +68,8 @@ import { hero } from '@/content/site';
       <!-- FASE 2 (composta dalle particelle tra il 20% e il 75% dello scroll, poi consolidata nel DOM) -->
       <div
         id="hero-stage-2"
-        class="gpu-accelerated pointer-events-none absolute inset-x-6 flex flex-col items-center justify-center space-y-5 sm:space-y-6"
+        class="gpu-accelerated pointer-events-none absolute inset-x-6 flex flex-col items-center justify-center"
       >
-        <div
-          data-particle-subreveal
-          class="inline-flex max-w-full items-center gap-2 rounded-full border border-white/20 bg-white/[0.04] px-3.5 py-1 opacity-0 backdrop-blur-md [@media(max-height:700px)]:hidden"
-        >
-          <span class="font-mono text-[10px] tracking-widest text-white uppercase sm:text-xs">
-            {hero.badge}
-          </span>
-        </div>
-
         <!-- Questo testo combacia con le lettere composte dalle particelle 3D: l'isola ne misura posizione, font e
              interlinea per campionare i punti target (righe separate da <br />, da tenere brevi) -->
         <p
@@ -90,21 +81,14 @@ import { hero } from '@/content/site';
 
         <h1
           data-particle-subreveal
-          class="max-w-3xl text-xl leading-snug font-medium tracking-tight text-[#FAFAFA] opacity-0 sm:text-3xl"
+          class="mt-8 max-w-3xl text-2xl leading-snug font-medium tracking-tight text-balance text-[#FAFAFA] opacity-0 sm:mt-10 sm:text-4xl"
         >
           {hero.title}
         </h1>
 
-        <p
-          data-particle-subreveal
-          class="max-w-2xl text-sm leading-relaxed font-normal text-[var(--text-muted)] opacity-0 sm:text-lg"
-        >
-          {hero.subtitle}
-        </p>
-
         <div
           data-particle-subreveal
-          class="flex flex-wrap items-center justify-center gap-3 pt-1 opacity-0 sm:gap-4"
+          class="mt-10 flex flex-wrap items-center justify-center gap-3 opacity-0 sm:mt-12 sm:gap-4"
         >
           <a
             href={hero.primaryCta.href}

@@ -1,7 +1,7 @@
 // src/content/site.ts
-// Dati globali, navigazione e testi di sezione della Home aziendale.
-// Copy: "Nuovo Copy Sito Web — concept Limitless", revisionato con l'"Audit Anti-AI Slop"
-// (niente antitesi "non X, ma Y" ripetute, niente buzzword astratte, niente triplette meccaniche).
+// Dati globali e testi della Home (layout snello: Hero → Visione & Missione → Sistemi su misura →
+// Prodotti → FAQ → Contatti). Copy: "Direttive di refactoring UI & Copy", ripulito secondo l'Audit
+// anti-AI slop (niente antitesi "non X, ma Y", triplette meccaniche o promesse numeriche non dimostrabili).
 // I dati societari mancanti sono marcati `// DA INSERIRE`.
 
 export const site = {
@@ -24,49 +24,7 @@ export const site = {
 
 /** Meta description di default (Home) */
 export const defaultDescription =
-  'NZT Solutions collega i reparti della tua azienda con software su misura, automazioni e Intelligenza Artificiale privata: meno ore perse a ricopiare dati, più capacità con lo stesso organico. Parli direttamente con chi scrive il codice.';
-
-// ---------------------------------------------------------------------------
-// Navigazione. Href assoluti "/#…": funzionano dalla Home (Lenis li intercetta) e dalle sottopagine.
-// ---------------------------------------------------------------------------
-export interface NavChild {
-  label: string;
-  href: string;
-  description: string;
-  external?: boolean;
-}
-
-export interface NavLink {
-  label: string;
-  href: string;
-  children?: NavChild[];
-}
-
-export const navLinks: NavLink[] = [
-  { label: 'Chi Siamo & Visione', href: '/#visione' },
-  { label: 'Servizi B2B', href: '/#servizi' },
-  {
-    label: 'Prodotti Proprietari',
-    href: '/#prodotti',
-    children: [
-      {
-        label: 'NZT Enterprise',
-        href: '/nzt-enterprise',
-        description: 'Ricerca documentale AI in locale, con i dati personali cifrati',
-      },
-      {
-        label: 'Pnote Voice AI',
-        href: site.pnoteUrl,
-        description: 'L’assistente vocale che prende le prenotazioni dei ristoranti',
-        external: true,
-      },
-    ],
-  },
-  { label: 'Metodo', href: '/#metodo' },
-  { label: 'FAQ', href: '/#faq' },
-];
-
-export const primaryCta = { label: 'Parla con Noi', href: '/#contatti' };
+  'NZT Solutions progetta sistemi su misura, automazioni e Intelligenza Artificiale privata per PMI e studi professionali. La tua azienda ha già tutto per correre: togliamo ciò che la frena.';
 
 // ---------------------------------------------------------------------------
 // Servizi selezionabili nel form (selectedServiceStore di Nano Stores)
@@ -83,47 +41,60 @@ export const serviceOptions = [
 export type ServiceId = (typeof serviceOptions)[number]['value'];
 
 // ---------------------------------------------------------------------------
-// Hero
+// Hero: solo H1 + 2 CTA (le particelle compongono la scritta di transizione)
 // ---------------------------------------------------------------------------
 export const hero = {
-  badge: 'Ingegneria del software & Intelligenza Artificiale privata',
   // Due righe brevi composte dalle particelle 3D (l'isola misura il testo reale: righe separate da <br />)
   particleLines: ['Zero Attrito', 'Operativo'],
-  title: 'La tua azienda viaggia al 20% del suo vero potenziale. Noi sblocchiamo il resto.',
-  subtitle:
-    'I dati per crescere li hai già: stanno nei PDF, nelle email, nel gestionale e nella testa delle tue persone. A frenarti sono le ore passate a ricopiare numeri tra programmi che non si parlano e a cercare informazioni sepolte nelle cartelle condivise. Entriamo nei tuoi flussi, togliamo il lavoro manuale e scriviamo il software su misura che fa girare l’impresa a pieno regime.',
-  primaryCta: { label: 'Prenota un’Analisi Tecnica', href: '/#contatti' },
-  secondaryCta: { label: 'Scopri Cosa Costruiamo', href: '/#servizi' },
+  title: 'La tua azienda ha già tutto per correre. Noi togliamo ciò che la frena.',
+  primaryCta: { label: 'Parla con un nostro ingegnere', href: '/#contatti' },
+  secondaryCta: { label: 'Esplora Sistemi e Prodotti', href: '/#sistemi' },
   scrollHint: 'Scorri nei sistemi ↓',
 };
 
-// Control Room (HeroInteractiveMockup.tsx): blocco subito dopo la Hero. I valori sono simulati.
-export const controlRoom = {
-  eyebrow: 'Control Room NZT Solutions · Telemetria simulata',
-  title: 'Cosa succede quando tutti i reparti ragionano come un unico sistema.',
-};
-
 // ---------------------------------------------------------------------------
-// TrustBar (i 4 pilastri)
+// Visione & Missione (2 card, nessuna intestazione di sezione)
 // ---------------------------------------------------------------------------
-export const trustPillars = [
+export const visionMission = [
   {
-    title: 'Codice 100% Proprietario',
-    text: 'Scritto da zero sulle tue logiche operative, senza template da adattare.',
+    label: '01 · Vision',
+    title: 'Sbloccare il 100% del potenziale della tua azienda.',
+    text: 'Ogni impresa ha già dentro di sé le competenze e i dati per correre, ma usa solo una frazione della propria forza perché è frenata da lavoro manuale e programmi rigidi. Il nostro scopo è togliere questo freno e azzerare la distanza tra ciò che la tua azienda vale e ciò che riesce a produrre ogni giorno.',
   },
   {
-    title: 'Sinapsi tra i Reparti',
-    text: 'I software che usi già ogni giorno si scambiano i dati in tempo reale.',
-  },
-  {
-    title: 'Segreto Industriale Blindato',
-    text: 'Modelli AI in locale e dati personali cifrati prima dell’indicizzazione.',
-  },
-  {
-    title: 'Da Ingegnere a Imprenditore',
-    text: 'Parli sempre con chi progetta e scrive il tuo sistema. Zero commerciali.',
+    label: '02 · Mission',
+    title: 'Portare innovazione avanzata, semplice da usare.',
+    text: 'Cerchiamo le automazioni e i sistemi di Intelligenza Artificiale che molte aziende ancora non conoscono e li portiamo dentro i loro flussi di lavoro. La complessità ingegneristica resta nel nostro codice: al tuo team arrivano strumenti da usare dal primo giorno, che tolgono ore di lavoro manuale ogni settimana.',
   },
 ];
+
+// ---------------------------------------------------------------------------
+// Sistemi su misura & White-Label (colonna sinistra sticky + 4 card)
+// ---------------------------------------------------------------------------
+export const customSystems = {
+  badge: 'Sistemi personalizzati & White-Label',
+  title: 'Hai un problema operativo? Costruiamo il sistema che lo risolve.',
+  text: 'Se la tua azienda o il tuo studio ha un blocco specifico, progettiamo e scriviamo il software o l’automazione che lo risolve, sulle tue regole e con il tuo marchio.',
+  cta: { label: 'Parla del tuo progetto con un tecnico', href: '/#contatti' },
+  steps: [
+    {
+      title: 'Call Tecnica & Analisi dei Requisiti',
+      text: 'Partiamo da una chiamata diretta con un ingegnere: ci racconti dove si blocca il lavoro e guardiamo come si muovono oggi le pratiche nei tuoi uffici. Alla fine della fase i requisiti del sistema sono scritti nero su bianco.',
+    },
+    {
+      title: 'Scrittura del Sistema Su Misura',
+      text: 'Scriviamo da zero il codice dell’applicativo web o dell’automazione AI, con dentro solo le funzioni che i tuoi flussi usano davvero. Nome, logo e colori sono quelli della tua azienda.',
+    },
+    {
+      title: 'Installazione & Integrazione in Azienda',
+      text: 'Installiamo il sistema sui tuoi server o sul tuo cloud privato e lo colleghiamo ai programmi che usi già (gestionali, ERP, email), senza mai interrompere il lavoro quotidiano.',
+    },
+    {
+      title: 'Formazione Pratica del Personale',
+      text: 'Un software funziona solo se chi lavora in ufficio lo usa volentieri. Affianchiamo il tuo team passo dopo passo, finché il nuovo strumento diventa un’abitudine per tutti.',
+    },
+  ],
+};
 
 // ---------------------------------------------------------------------------
 // Intestazioni di sezione
@@ -135,85 +106,22 @@ export interface SectionCopy {
 }
 
 export const sectionCopy = {
-  vision: {
-    eyebrow: 'Perché esiste NZT Solutions',
-    title:
-      'Hai assunto persone brillanti per far crescere l’azienda. Perché passano metà della giornata a fare da cavo di collegamento tra due schermi?',
-    lead: 'Ogni giorno dentro la tua azienda passano preventivi, storico clienti, varianti tecniche, contratti e marginalità di commessa, spezzettati tra software che non si vedono tra loro. Così i tuoi profili migliori fanno da “ponte umano”: aprono un PDF, copiano tre righe su Excel, le ricopiano nel gestionale, mandano l’email di conferma e ricontrollano a mano di non aver sbagliato una cifra. Il nostro lavoro è togliere questo tappo. Quando dati, software e Intelligenza Artificiale stanno nella stessa architettura, l’azienda torna a usare la capacità che ha già e le emergenze tornano a essere eccezioni.',
-  },
-  services: {
-    eyebrow: 'Cosa progettiamo',
-    title: 'Tre leve per togliere i freni alla tua operatività.',
-    lead: 'Interveniamo dove i software preconfezionati si arrendono: dall’analisi dei colli di bottiglia fino alla scrittura di piattaforme proprietarie e automazioni su misura.',
-  },
   products: {
-    eyebrow: 'Tecnologie proprietarie NZT',
-    title: 'Sistemi già pronti, nati sul campo per problemi che conosciamo a memoria.',
-    lead: 'Accanto allo sviluppo su misura abbiamo ingegnerizzato due prodotti verticali, pronti da installare nella tua struttura.',
-  },
-  method: {
-    eyebrow: 'Come lavoriamo',
-    title: 'Il nuovo sistema entra in azienda senza fermare gli uffici nemmeno un giorno.',
-    lead: 'Cambiare gli strumenti informatici spaventa molte aziende per il timore di bloccare gli uffici. Il nostro protocollo in 4 passaggi innesta la nuova tecnologia mentre la tua azienda continua a correre.',
+    eyebrow: 'Soluzioni proprietarie pronte all’uso',
+    title: 'Sistemi nati dalla nostra ricerca, pronti per la tua impresa.',
+    lead: 'Oltre ai progetti su misura, abbiamo sviluppato due tecnologie verticali già pronte da installare.',
   },
   faq: {
-    eyebrow: 'Domande dirette, risposte tecniche',
-    title: 'Tutto quello che è giusto chiarire prima di metterci al tavolo.',
-    lead: 'Hai un caso particolare o un dubbio sull’infrastruttura? Nella prima chiamata parli direttamente con i nostri ingegneri.',
+    eyebrow: 'Domande frequenti',
+    title: 'Tutto quello che è giusto chiarire prima di iniziare.',
+    lead: 'Hai un caso specifico? Il primo colloquio tecnico serve proprio a questo.',
   },
   cta: {
-    eyebrow: 'Parla con noi',
+    eyebrow: 'Contatta NZT Solutions',
     title: 'Sblocca il 100% della capacità operativa della tua azienda.',
-    lead: 'Che tu abbia in mente un software proprietario da creare da zero, un ufficio intero da liberare dal copia-incolla o l’installazione di NZT Enterprise nel tuo studio, mettiamoci a un tavolo tecnico e guardiamo i numeri.',
+    lead: 'Che tu voglia costruire un sistema su misura, automatizzare un flusso d’ufficio o installare NZT Enterprise nel tuo studio, parla direttamente con chi scriverà il tuo codice.',
   },
 } satisfies Record<string, SectionCopy>;
-
-// ---------------------------------------------------------------------------
-// Confronto "Azienda frenata" / "Azienda sotto effetto NZT"
-// ---------------------------------------------------------------------------
-export interface ComparisonPoint {
-  title: string;
-  text: string;
-}
-
-export const comparison = {
-  traditional: {
-    badge: 'Azienda frenata',
-    title: 'Lentezza burocratica e memoria frammentata',
-    points: [
-      {
-        title: 'Reparti a compartimenti stagni',
-        text: 'CRM, fatturazione, fogli Excel, PEC e produzione vivono su isole separate. Se un dato cambia in un posto, qualcuno deve ricordarsi di aggiornarlo a mano in tutti gli altri.',
-      },
-      {
-        title: 'Crescita bloccata dalla burocrazia',
-        text: 'Se domani raddoppiano gli ordini vai in apnea: per reggere l’urto devi assumere altre persone solo per inserire dati e rincorrere carte.',
-      },
-      {
-        title: 'AI usata alla cieca (e a rischio)',
-        text: 'Qualche collaboratore incolla contratti e dati sensibili su chatbot gratuiti online. Il segreto aziendale resta esposto e in ufficio non nasce nessun automatismo stabile.',
-      },
-    ] satisfies ComparisonPoint[],
-  },
-  nzt: {
-    badge: 'Azienda sotto effetto NZT',
-    title: 'Lucidità operativa e processi che girano da soli',
-    points: [
-      {
-        title: 'Rete neurale aziendale',
-        text: 'Scriviamo il codice che salda insieme i tuoi strumenti. Una fattura registrata in amministrazione aggiorna da sola produzione, logistica e controllo di gestione.',
-      },
-      {
-        title: 'Più capacità a parità di organico',
-        text: 'Il lavoro meccanico scorre sullo sfondo. Le ore recuperate tornano a chi segue i clienti e tiene d’occhio i margini.',
-      },
-      {
-        title: 'Intelligenza Artificiale dentro il motore',
-        text: 'L’AI lavora dentro i programmi che usi già: legge i documenti in arrivo, incrocia i dati con lo storico, segnala le anomalie e ti presenta la pratica già preparata.',
-      },
-    ] satisfies ComparisonPoint[],
-  },
-};
 
 // ---------------------------------------------------------------------------
 // Blocco contatti e form

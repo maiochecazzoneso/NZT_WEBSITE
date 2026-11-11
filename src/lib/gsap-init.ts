@@ -26,7 +26,7 @@ function startLenis(): void {
     duration: 1.1,
     easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
     smoothWheel: true,
-    // Click sulle ancore (#servizi, #contatti…) gestiti da Lenis; offset da html { scroll-padding-top }
+    // Click sulle ancore (#sistemi, #contatti…) gestiti da Lenis
     anchors: true,
   });
   lenis.on('scroll', ScrollTrigger.update);

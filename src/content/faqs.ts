@@ -1,6 +1,5 @@
 // src/content/faqs.ts
-// Domande frequenti sull'azienda (Specifica Contenuti §3 Sezione 7). Testo semplice question/answer:
-// pronto per il JSON-LD FAQPage (architettura tecnica §7).
+// Domande frequenti. Testo semplice question/answer: pronto per il JSON-LD FAQPage (architettura tecnica §7).
 
 export interface Faq {
   question: string;
@@ -9,24 +8,23 @@ export interface Faq {
 
 export const faqs: Faq[] = [
   {
-    question: 'Con che tipo di realtà lavora NZT Solutions?',
+    question: 'Che tipo di realtà si rivolge a NZT Solutions?',
     answer:
-      'Affianchiamo PMI manifatturiere, di servizi o commerciali, studi professionali (commercialisti, avvocati, consulenti del lavoro, notai) e uffici amministrativi strutturati. Il punto in comune è uno: hanno capito che il lavoro manuale al computer sta frenando la crescita e vogliono più velocità operativa con software proprietario e AI sicura.',
+      'Lavoriamo con PMI strutturate, studi professionali (commercialisti, avvocati, consulenti del lavoro) e uffici amministrativi. Di solito ci chiamano quando il lavoro manuale al computer ha iniziato a rallentare la crescita, oppure quando vogliono usare l’Intelligenza Artificiale sui propri documenti in modo sicuro.',
   },
   {
-    question: 'Dobbiamo buttare via il gestionale che usiamo oggi per lavorare con voi?',
+    question: 'Dobbiamo cambiare i programmi che usiamo oggi per lavorare con voi?',
     answer:
-      'No. Nella maggior parte dei casi il salto più rapido si ottiene lasciando al loro posto i programmi che i tuoi dipendenti conoscono già e costruendo sotto il cofano i connettori API e gli agenti AI che spostano, controllano e aggiornano i dati tra un programma e l’altro al posto delle persone.',
+      'No. Spesso il risultato migliore si ottiene lasciando al loro posto i software che usi già, costruendo dietro le quinte i connettori API e le automazioni AI che passano e controllano i dati da un programma all’altro al posto delle persone.',
   },
   {
-    question: 'Se usiamo l’Intelligenza Artificiale sui nostri documenti, chi vede i nostri dati?',
+    question: 'Come garantite la riservatezza dei dati aziendali con l’Intelligenza Artificiale?',
     answer:
-      'Progettiamo architetture private e installiamo sistemi proprietari come NZT Enterprise, che lavorano in locale sui tuoi server e cifrano i dati personali prima ancora dell’indicizzazione. I tuoi documenti non finiscono sui chatbot pubblici; se un componente esterno serve davvero, lo concordiamo e lo mettiamo per iscritto con te prima di installarlo.',
+      'Progettiamo architetture private e sistemi proprietari (come NZT Enterprise) che elaborano i documenti in locale e criptano le informazioni personali prima ancora dell’indicizzazione. I tuoi archivi restano fuori dai chatbot pubblici.',
   },
   {
-    question:
-      'Come si svolge il primo incontro? C’è un commerciale che cerca di vendermi un pacchetto?',
+    question: 'Come funziona il primo contatto? Ha un costo?',
     answer:
-      'In NZT Solutions non abbiamo venditori. Il primo colloquio è gratuito e lo fai con un ingegnere del nostro team. Guardiamo insieme il flusso che vuoi sbloccare e ti diciamo con franchezza se l’intervento ha senso, quanto tempo può farti recuperare e quale strada tecnica conviene.',
+      'Il primo colloquio è gratuito e lo fai direttamente con un nostro ingegnere. Guardiamo insieme il problema che vuoi risolvere e ti diciamo con franchezza se si può fare e in quanto tempo.',
   },
 ];

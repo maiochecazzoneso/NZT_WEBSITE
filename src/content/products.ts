@@ -6,25 +6,23 @@ import { site } from './site';
 
 export const products = {
   enterprise: {
-    badge: 'Prodotto proprietario • Studi professionali, Uffici Legali & Amministrazioni',
+    badge: 'Prodotto proprietario • Studi professionali & Aziende',
     name: 'NZT Enterprise',
-    subtitle:
-      'Il cervello documentale in locale che conosce ogni riga del tuo archivio, con crittografia nativa.',
+    subtitle: 'Motore di ricerca e analisi documentale AI in locale, con crittografia nativa.',
     description:
-      'Quante ore perdono i tuoi professionisti a cercare una clausola o un precedente sepolto in migliaia di PDF, contratti, bilanci e pratiche? Con le AI pubbliche non puoi farlo senza violare privacy e segreto professionale. NZT Enterprise installa un motore di ricerca neurale dentro il tuo studio o la tua azienda: lavora in locale, cifra i dati personali direttamente nell’algoritmo di embedding e risponde a domande complesse sull’intero archivio storico. In pochi secondi hai la risposta con il link al documento e il numero di pagina, e i dati personali non lasciano mai in chiaro il tuo perimetro.',
-    cta: { label: 'Esplora la scheda tecnica di NZT Enterprise', href: '/nzt-enterprise' },
+      'Migliaia di contratti, bilanci e pratiche da consultare senza poter usare AI pubbliche per ragioni di segreto professionale? NZT Enterprise trasforma il tuo archivio in una mente interrogabile. Lavora in locale e cripta i dati sensibili direttamente nell’algoritmo di embedding; ogni risposta arriva in pochi secondi con la pagina e il documento originale citati.',
+    cta: { label: 'Apri la scheda tecnica di NZT Enterprise', href: '/nzt-enterprise' },
   },
   pnote: {
-    badge: 'Prodotto proprietario • Verticale Ristorazione & Accoglienza',
+    badge: 'Prodotto proprietario • Settore Ristorazione & Accoglienza',
     name: 'Pnote — Voicebot AI',
-    subtitle:
-      'L’assistente vocale neurale che risponde al telefono e riempie l’agenda mentre tu lavori.',
+    subtitle: 'Assistente vocale autonomo per la gestione telefonica e le prenotazioni.',
     description:
-      'Ogni chiamata persa durante il servizio è un tavolo vuoto e un cliente che prenota altrove. Pnote è il nostro sistema vocale progettato per i ristoranti: risponde al telefono H24 con voce naturale, capisce le richieste (orari, intolleranze, tavoli all’aperto), controlla le disponibilità reali in sala e registra la prenotazione da solo.',
+      'Quando il telefono squilla nel pieno del servizio, risponde Pnote. Parla con voce naturale, controlla la disponibilità reale in sala e registra la prenotazione da solo, mentre il tuo staff resta ai tavoli.',
     b2bNote:
-      'Vuoi portare questa stessa tecnologia vocale nel centralino, nel supporto clienti o nella presa appuntamenti della tua azienda, fuori dalla ristorazione? Addestriamo agenti vocali su misura e li colleghiamo direttamente al tuo CRM o gestionale.',
-    cta: { label: 'Vai al portale pnote.it', href: site.pnoteUrl },
-    secondaryCta: { label: 'Porta il Voicebot nella tua azienda', href: '/#contatti' },
+      'Cerchi un centralino vocale AI per la tua azienda (fuori dalla ristorazione)? Adattiamo il motore vocale di Pnote al tuo customer care.',
+    cta: { label: 'Visita pnote.it', href: site.pnoteUrl },
+    secondaryCta: { label: 'Richiedi un Voicebot aziendale', href: '/#contatti' },
   },
 };
 

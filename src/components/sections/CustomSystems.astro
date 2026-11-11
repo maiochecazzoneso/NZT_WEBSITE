@@ -1,0 +1,59 @@
+---
+// src/components/sections/CustomSystems.astro — Direttive refactoring §2.C
+// Colonna sinistra sticky (posizionamento + CTA) e colonna destra con le 4 card del percorso.
+// Nessun antenato con overflow hidden: position: sticky funziona (Lenis non lo altera).
+// La numerazione si accende con la classe .is-active applicata da ScrollTrigger ([data-method-step] in gsap-init).
+import { buttonVariants } from '@ui/Button';
+import { customSystems } from '@/content/site';
+---
+
+<section
+  id="sistemi"
+  aria-labelledby="sistemi-title"
+  class="border-y border-[var(--border-subtle)] py-24 sm:py-32"
+>
+  <div class="mx-auto max-w-7xl px-6 lg:grid lg:grid-cols-12 lg:items-start lg:gap-12 lg:px-8">
+    <div class="space-y-6 lg:sticky lg:top-32 lg:col-span-5" data-animate="fade-up">
+      <p class="font-mono text-xs tracking-widest text-[var(--text-muted)] uppercase">
+        {customSystems.badge}
+      </p>
+      <h2 id="sistemi-title" class="text-h2 text-[#FAFAFA]">{customSystems.title}</h2>
+      <p class="max-w-[52ch] text-lead text-[var(--text-muted)]">{customSystems.text}</p>
+      <a
+        href={customSystems.cta.href}
+        data-service="software-custom"
+        class={buttonVariants({ variant: 'primary', size: 'lg', className: 'mt-2' })}
+      >
+        {customSystems.cta.label}
+        <span aria-hidden="true">→</span>
+      </a>
+    </div>
+
+    <ol class="mt-14 flex flex-col gap-6 lg:col-span-7 lg:mt-0">
+      {
+        customSystems.steps.map((step, index) => (
+          <li
+            data-method-step
+            data-animate="fade-up"
+            class="group specular-card rounded-2xl p-8 sm:p-10"
+          >
+            <span
+              aria-hidden="true"
+              class="font-mono text-5xl leading-none text-zinc-800 transition-colors duration-300 ease-out-expo group-[.is-active]:text-[#FAFAFA]"
+            >
+              {String(index + 1).padStart(2, '0')}
+            </span>
+            <h3 class="mt-8 text-h3 text-[#FAFAFA]">{step.title}</h3>
+            <p class="mt-4 leading-relaxed text-[var(--text-muted)]">{step.text}</p>
+          </li>
+        ))
+      }
+    </ol>
+  </div>
+</section>
+
+<script>
+  import { bindServiceLinks } from '@/lib/service-links';
+
+  bindServiceLinks();
+</script>

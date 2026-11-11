@@ -51,8 +51,6 @@
     background-color: var(--bg-primary);
     color: var(--text-primary);
     scroll-behavior: auto; /* Gestito da Lenis */
-    /* Navbar fissa 64px (§5.2.1): le ancore non finiscono sotto l'header (letto anche da Lenis.scrollTo) */
-    scroll-padding-top: 4rem;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
