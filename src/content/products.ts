@@ -6,24 +6,25 @@ import { site } from './site';
 
 export const products = {
   enterprise: {
-    badge: 'Prodotto proprietario • Studi professionali & aziende',
+    badge: 'Prodotto proprietario • Studi professionali, Uffici Legali & Amministrazioni',
     name: 'NZT Enterprise',
-    subtitle: 'Sistema RAG di Intelligenza Documentale in Locale con Crittografia dei Dati.',
+    subtitle:
+      'Il cervello documentale in locale che conosce ogni riga del tuo archivio, con crittografia nativa.',
     description:
-      'Hai migliaia di documenti, contratti, bilanci e pratiche da analizzare, ma non puoi caricarli su AI pubbliche per motivi di privacy e segreto professionale? NZT Enterprise indicizza l’intero archivio del tuo studio o della tua amministrazione lavorando in locale e criptando i dati personali direttamente nell’algoritmo di embedding. Chiedi e ottieni risposte immediate con la citazione della fonte, senza che i dati personali escano in chiaro dal tuo perimetro.',
-    cta: { label: 'Apri la scheda tecnica di NZT Enterprise', href: '/nzt-enterprise' },
+      'Quante ore perdono i tuoi professionisti a cercare una clausola o un precedente sepolto in migliaia di PDF, contratti, bilanci e pratiche? Con le AI pubbliche non puoi farlo senza violare privacy e segreto professionale. NZT Enterprise installa un motore di ricerca neurale dentro il tuo studio o la tua azienda: lavora in locale, cifra i dati personali direttamente nell’algoritmo di embedding e risponde a domande complesse sull’intero archivio storico. In pochi secondi hai la risposta con il link al documento e il numero di pagina, e i dati personali non lasciano mai in chiaro il tuo perimetro.',
+    cta: { label: 'Esplora la scheda tecnica di NZT Enterprise', href: '/nzt-enterprise' },
   },
   pnote: {
-    badge: 'Prodotto proprietario • Verticale ristorazione',
+    badge: 'Prodotto proprietario • Verticale Ristorazione & Accoglienza',
     name: 'Pnote — Voicebot AI',
     subtitle:
-      'Assistente Vocale Neurale per la gestione autonoma delle chiamate e delle prenotazioni.',
+      'L’assistente vocale neurale che risponde al telefono e riempie l’agenda mentre tu lavori.',
     description:
-      'Il nostro sistema di Intelligenza Artificiale vocale progettato specificamente per il settore della ristorazione. Risponde al telefono con voce naturale, comprende le richieste dei clienti, verifica le disponibilità dei tavoli e registra le prenotazioni in autonomia.',
+      'Ogni chiamata persa durante il servizio è un tavolo vuoto e un cliente che prenota altrove. Pnote è il nostro sistema vocale progettato per i ristoranti: risponde al telefono H24 con voce naturale, capisce le richieste (orari, intolleranze, tavoli all’aperto), controlla le disponibilità reali in sala e registra la prenotazione da solo.',
     b2bNote:
-      'Vuoi portare la nostra tecnologia Voicebot nel customer care o nel centralino della tua azienda (fuori dalla ristorazione)? Sviluppiamo integrazioni vocali custom sui tuoi sistemi.',
-    cta: { label: 'Visita il portale dedicato pnote.it', href: site.pnoteUrl },
-    secondaryCta: { label: 'Chiedi un Voicebot per la tua azienda', href: '/#contatti' },
+      'Vuoi portare questa stessa tecnologia vocale nel centralino, nel supporto clienti o nella presa appuntamenti della tua azienda, fuori dalla ristorazione? Addestriamo agenti vocali su misura e li colleghiamo direttamente al tuo CRM o gestionale.',
+    cta: { label: 'Vai al portale pnote.it', href: site.pnoteUrl },
+    secondaryCta: { label: 'Porta il Voicebot nella tua azienda', href: '/#contatti' },
   },
 };
 
@@ -45,7 +46,7 @@ export const enterprisePage = {
   innovation: {
     eyebrow: 'L’innovazione tecnologica',
     title: 'Come abbiamo risolto il paradosso tra potenza dell’AI e segreto professionale.',
-    lead: 'Chi lavora con documenti contabili, fiscali, legali o industriali sa di non poter caricare i file dei propri clienti su piattaforme cloud esterne. NZT Enterprise nasce nei laboratori di NZT Solutions per ribaltare questo paradigma attraverso tre pilastri ingegneristici.',
+    lead: 'Chi lavora con documenti contabili, fiscali, legali o industriali sa di non poter caricare i file dei propri clienti su piattaforme cloud esterne. Abbiamo costruito NZT Enterprise attorno a questo vincolo: ecco come funziona.',
     pillars: [
       {
         title: 'Algoritmo di Embedding con Crittografia dei Dati Personali',
@@ -53,11 +54,11 @@ export const enterprisePage = {
       },
       {
         title: 'Elaborazione quasi interamente in Locale',
-        text: 'L’infrastruttura di calcolo lavora direttamente sulla tua macchina o sul server aziendale. L’intelligenza viene portata dove risiedono i tuoi file, invece di spedire i tuoi file verso server sconosciuti. Cosa resta in locale e cosa no viene definito e documentato insieme a te in fase di installazione.',
+        text: 'L’infrastruttura di calcolo gira sulla tua macchina o sul server aziendale, dove stanno già i tuoi file. Cosa resta in locale e cosa no viene definito e messo per iscritto insieme a te in fase di installazione.',
       },
       {
         title: 'Risposte Verificabili con Citazione Puntuale',
-        text: 'Ogni risposta è ancorata ai tuoi documenti. Per ogni informazione estratta, NZT Enterprise indica il nome del file, la data e la pagina esatta da cui ha preso il dato, permettendoti di aprire il documento originale con un click e verificarlo.',
+        text: 'Per ogni informazione estratta NZT Enterprise indica il file, la data e la pagina da cui ha preso il dato. Un clic apre il documento originale, così chi firma il parere può controllare la fonte prima di usarla.',
       },
     ],
   },

@@ -8,23 +8,23 @@ export interface MethodStep {
 
 export const methodSteps: MethodStep[] = [
   {
-    title: 'Immersione nel tuo Flusso',
+    title: 'Radiografia sul campo',
     description:
-      'Non partiamo dal codice, partiamo dal tuo lavoro. Analizziamo come si muovono le informazioni oggi nella tua azienda e dove si generano rallentamenti, colli di bottiglia o errori.',
+      'Prima di aprire l’editor ci sediamo accanto a chi lavora nei tuoi uffici. Guardiamo dove si inceppano le informazioni, quali fogli Excel tengono in piedi i reparti e in quale passaggio nascono gli errori che si ripetono ogni mese.',
   },
   {
-    title: 'Architettura & Prototipo Visivo',
+    title: 'Architettura e Prototipo Navigabile',
     description:
-      'Disegniamo la soluzione tecnica più snella ed efficace. Prima di sviluppare l’intero sistema, ti mostriamo i flussi e le interfacce per validare insieme ogni passaggio.',
+      'Progettiamo la soluzione più dritta al risultato. Prima di scrivere il motore definitivo ti mostriamo a schermo le interfacce e il giro esatto che faranno i dati: sai cosa avrai in mano prima che inizi lo sviluppo pesante.',
   },
   {
-    title: 'Sviluppo Modulare & Integrazione',
+    title: 'Costruzione e Innesto Indolore',
     description:
-      'Scriviamo il software e configuriamo i modelli AI in ambienti sicuri, collegandoci ai tuoi strumenti attuali senza mai bloccare l’operatività dei tuoi uffici.',
+      'Sviluppiamo il software e addestriamo i modelli AI in ambienti di test isolati. Il collegamento ai tuoi gestionali attuali avviene dietro le quinte, mentre i tuoi collaboratori continuano a lavorare come sempre.',
   },
   {
-    title: 'Rilascio, Formazione e Supporto Continuo',
+    title: 'Accensione, Affiancamento e Telemetria',
     description:
-      'Mettiamo il sistema in produzione, affianchiamo il tuo personale nell’utilizzo quotidiano e monitoriamo le prestazioni nel tempo.',
+      'Mettiamo il sistema online, formiamo il personale direttamente sulle loro postazioni e monitoriamo le prestazioni nel tempo, perché la velocità del primo giorno resti quella del primo anno.',
   },
 ];

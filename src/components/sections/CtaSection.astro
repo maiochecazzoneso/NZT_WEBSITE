@@ -3,7 +3,7 @@
 // Riutilizzata dalla scheda prodotto /nzt-enterprise con copy dedicato e servizio preimpostato.
 import SectionHeader from '@sections/SectionHeader.astro';
 import { ContactForm } from '@interactive/ContactForm';
-import { sectionCopy, site, type SectionCopy, type ServiceId } from '@/content/site';
+import { contactInfo, sectionCopy, site, type SectionCopy, type ServiceId } from '@/content/site';
 
 interface Props {
   copy?: SectionCopy;
@@ -23,15 +23,15 @@ const { copy = sectionCopy.cta, defaultService } = Astro.props;
       >
         <div>
           <dt class="font-mono text-xs tracking-widest text-[var(--text-subtle)] uppercase">
-            Primo colloquio
+            {contactInfo[0].label}
           </dt>
           <dd class="mt-1 text-[var(--text-muted)]">
-            Gratuito, con un profilo tecnico: niente venditori.
+            {contactInfo[0].text}
           </dd>
         </div>
         <div>
           <dt class="font-mono text-xs tracking-widest text-[var(--text-subtle)] uppercase">
-            Email diretta
+            Canale diretto
           </dt>
           <dd class="mt-1">
             <a

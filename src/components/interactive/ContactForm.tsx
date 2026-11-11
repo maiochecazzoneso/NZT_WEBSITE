@@ -1,5 +1,5 @@
 // src/components/interactive/ContactForm.tsx — Specifica Contenuti §3 Sezione 8
-// Modulo validato con Zod (react-hook-form). La select "Di cosa hai bisogno?" è sincronizzata in entrambe le
+// Modulo validato con Zod (react-hook-form). La select "Su cosa vuoi intervenire?" è sincronizzata in entrambe le
 // direzioni con selectedServiceStore: le CTA di servizi e prodotti la preimpostano prima di scorrere qui.
 // Invio: l'endpoint email (Resend) arriva allo Step 6. Finché non c'è, a validazione superata il modulo lo
 // dichiara apertamente e propone la stessa richiesta come email precompilata: nessun finto "messaggio inviato".
@@ -25,13 +25,8 @@ const schema = z.object({
     .regex(/^$|^[+\d][\d\s./-]{5,}$/, 'Numero non valido.')
     .optional(),
   service: z.enum(serviceValues),
-  message: z
-    .string()
-    .trim()
-    .min(
-      20,
-      'Raccontaci qualcosa in più (almeno 20 caratteri): ci aiuta a preparare il primo colloquio.',
-    ),
+  // Facoltativo per il nuovo copy: chi scrive poco non va bloccato
+  message: z.string().trim().max(4000, 'Testo troppo lungo (massimo 4000 caratteri).'),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -95,9 +90,9 @@ export function ContactForm({ defaultService }: ContactFormProps) {
       `Email: ${values.email}`,
       `Azienda / Studio: ${values.company}`,
       values.phone ? `Telefono: ${values.phone}` : null,
-      `Esigenza: ${serviceLabel}`,
-      '',
-      values.message,
+      `Su cosa intervenire: ${serviceLabel}`,
+      values.message ? '' : null,
+      values.message || null,
     ]
       .filter((line) => line !== null)
       .join('\n');
@@ -185,7 +180,7 @@ export function ContactForm({ defaultService }: ContactFormProps) {
         </div>
         <div>
           <label htmlFor={id('company')} className="mb-1.5 block text-sm text-[#FAFAFA]">
-            Azienda / Studio Professionale
+            {contactFormCopy.companyLabel}
           </label>
           <input
             id={id('company')}
@@ -200,7 +195,8 @@ export function ContactForm({ defaultService }: ContactFormProps) {
         </div>
         <div>
           <label htmlFor={id('phone')} className="mb-1.5 block text-sm text-[#FAFAFA]">
-            Telefono <span className="text-[var(--text-subtle)]">(opzionale)</span>
+            Telefono{' '}
+            <span className="text-[var(--text-subtle)]">({contactFormCopy.phoneHint})</span>
           </label>
           <input
             id={id('phone')}
@@ -217,7 +213,7 @@ export function ContactForm({ defaultService }: ContactFormProps) {
 
       <div>
         <label htmlFor={id('service')} className="mb-1.5 block text-sm text-[#FAFAFA]">
-          Di cosa hai bisogno?
+          {contactFormCopy.serviceLabel}
         </label>
         <select id={id('service')} className={cn(fieldClass, 'appearance-auto')} {...serviceField}>
           {serviceOptions.map((option) => (
@@ -230,7 +226,8 @@ export function ContactForm({ defaultService }: ContactFormProps) {
 
       <div>
         <label htmlFor={id('message')} className="mb-1.5 block text-sm text-[#FAFAFA]">
-          Messaggio
+          {contactFormCopy.messageLabel}{' '}
+          <span className="text-[var(--text-subtle)]">(opzionale)</span>
         </label>
         <textarea
           id={id('message')}

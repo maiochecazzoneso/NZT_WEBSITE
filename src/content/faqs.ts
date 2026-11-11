@@ -9,25 +9,24 @@ export interface Faq {
 
 export const faqs: Faq[] = [
   {
-    question: 'Che tipo di aziende si rivolge a NZT Solutions?',
+    question: 'Con che tipo di realtà lavora NZT Solutions?',
     answer:
-      'Lavoriamo con PMI strutturate, studi professionali (commercialisti, avvocati, consulenti del lavoro), uffici amministrativi e aziende di servizi o produzione che vogliono digitalizzare processi complessi, creare un software proprietario o introdurre l’AI nei propri flussi di lavoro in modo sicuro e concreto.',
+      'Affianchiamo PMI manifatturiere, di servizi o commerciali, studi professionali (commercialisti, avvocati, consulenti del lavoro, notai) e uffici amministrativi strutturati. Il punto in comune è uno: hanno capito che il lavoro manuale al computer sta frenando la crescita e vogliono più velocità operativa con software proprietario e AI sicura.',
+  },
+  {
+    question: 'Dobbiamo buttare via il gestionale che usiamo oggi per lavorare con voi?',
+    answer:
+      'No. Nella maggior parte dei casi il salto più rapido si ottiene lasciando al loro posto i programmi che i tuoi dipendenti conoscono già e costruendo sotto il cofano i connettori API e gli agenti AI che spostano, controllano e aggiornano i dati tra un programma e l’altro al posto delle persone.',
+  },
+  {
+    question: 'Se usiamo l’Intelligenza Artificiale sui nostri documenti, chi vede i nostri dati?',
+    answer:
+      'Progettiamo architetture private e installiamo sistemi proprietari come NZT Enterprise, che lavorano in locale sui tuoi server e cifrano i dati personali prima ancora dell’indicizzazione. I tuoi documenti non finiscono sui chatbot pubblici; se un componente esterno serve davvero, lo concordiamo e lo mettiamo per iscritto con te prima di installarlo.',
   },
   {
     question:
-      'Costruite solo nuovi software da zero o potete automatizzare i programmi che usiamo già?',
+      'Come si svolge il primo incontro? C’è un commerciale che cerca di vendermi un pacchetto?',
     answer:
-      'Facciamo entrambe le cose. Spesso il valore più grande nasce dal far dialogare tra loro i software che hai già in azienda attraverso connettori API e agenti di Intelligenza Artificiale che eliminano il lavoro manuale di copia-incolla tra un sistema e l’altro.',
-  },
-  {
-    question:
-      'Come garantite la riservatezza dei dati aziendali quando integrate l’Intelligenza Artificiale?',
-    answer:
-      'La sicurezza del dato è il nostro punto di partenza. A differenza di chi si limita a collegare il tuo gestionale a chatbot pubblici, noi progettiamo architetture isolate e sistemi proprietari (come NZT Enterprise) capaci di elaborare i dati in locale e criptare le informazioni personali prima ancora dell’indicizzazione.',
-  },
-  {
-    question: 'Come funziona il primo contatto? Ha un costo?',
-    answer:
-      'Il primo colloquio conoscitivo è gratuito e avviene direttamente con un nostro profilo tecnico, non con un venditore. Serve a capire il tuo scenario operativo e a dirti con estrema trasparenza se e come la nostra tecnologia può farti risparmiare tempo e risorse.',
+      'In NZT Solutions non abbiamo venditori. Il primo colloquio è gratuito e lo fai con un ingegnere del nostro team. Guardiamo insieme il flusso che vuoi sbloccare e ti diciamo con franchezza se l’intervento ha senso, quanto tempo può farti recuperare e quale strada tecnica conviene.',
   },
 ];

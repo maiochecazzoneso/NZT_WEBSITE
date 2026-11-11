@@ -11,43 +11,53 @@ import { cn } from '@/lib/utils';
 const TICK_MS = 1400;
 
 const FLOW_STEPS = [
-  { label: 'Ingresso ordine / documento', detail: 'ordine_4821.pdf · da email' },
-  { label: 'Estrazione dati AI', detail: '14 campi letti · cliente, righe, importi' },
-  { label: 'Verifica regole di business', detail: 'listino, fido, disponibilità: ok' },
-  { label: 'Aggiornamento ERP & notifica', detail: 'commessa creata · magazzino avvisato' },
+  { label: 'Arrivo ordine / documento', detail: 'ordine_4821.pdf · da email' },
+  {
+    label: 'Lettura AI del documento',
+    detail: '14 campi estratti · cliente, righe, sconti, importi',
+  },
+  { label: 'Controllo incrociato', detail: 'listino, fido bancario, giacenza: verificati' },
+  { label: 'Esecuzione sul gestionale', detail: 'commessa aperta · magazzino allertato' },
 ];
 
 const ARCH_NODES = [
-  'Interfaccia web dedicata',
-  'API gateway proprietarie',
+  'Interfaccia operativa dedicata',
+  'API gateway proprietarie tra i tuoi reparti',
   'Database aziendale isolato',
 ];
 
-const AI_QUESTION = 'Quali contratti fornitori scadono entro marzo con rinnovo tacito?';
-const AI_ANSWER = '3 contratti: Logistica Nord, Manutenzioni Impianti, Software Paghe.';
+const AI_QUESTION = 'Quali contratti fornitori scadono entro marzo con clausola di rinnovo tacito?';
+const AI_ANSWER = '3 contratti rilevati: Logistica Nord, Manutenzioni Impianti, Software Paghe.';
 const AI_SOURCES = [
-  'contratti/2023/logistica_nord.pdf · p. 4',
-  'contratti/2024/manutenzioni.pdf · p. 2',
+  'contratti/2023/logistica_nord.pdf · pag. 4',
+  'contratti/2024/manutenzioni.pdf · pag. 2',
 ];
 
 function Panel({
   index,
+  label,
   title,
   children,
 }: {
   index: number;
+  label: string;
   title: string;
   children: React.ReactNode;
 }) {
   return (
     <article className="specular-card flex flex-col overflow-hidden rounded-2xl">
       <header className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] px-5 py-3">
-        <h3 className="font-mono text-[11px] tracking-widest text-[#FAFAFA] uppercase">{title}</h3>
+        <p className="font-mono text-[11px] tracking-widest text-[var(--text-muted)] uppercase">
+          {label}
+        </p>
         <span className="font-mono text-[11px] text-[var(--text-subtle)]">
           {String(index).padStart(2, '0')}
         </span>
       </header>
-      <div className="bg-technical-grid flex flex-1 flex-col p-5">{children}</div>
+      <div className="bg-technical-grid flex flex-1 flex-col p-5">
+        <h3 className="mb-4 text-sm leading-snug font-medium text-[#FAFAFA]">{title}</h3>
+        {children}
+      </div>
     </article>
   );
 }
@@ -97,7 +107,11 @@ export function HeroInteractiveMockup() {
   return (
     <div ref={rootRef} className="grid grid-cols-1 gap-6 lg:grid-cols-3">
       {/* MODULO 1 — Flusso aziendale automatizzato */}
-      <Panel index={1} title="Flusso aziendale automatizzato">
+      <Panel
+        index={1}
+        label="Flusso aziendale automatizzato"
+        title="Dal documento grezzo all’ERP, senza toccare la tastiera"
+      >
         <ol className="space-y-2.5">
           {FLOW_STEPS.map((step, i) => {
             const state = i < flowStep ? 'done' : i === flowStep ? 'active' : 'idle';
@@ -141,13 +155,17 @@ export function HeroInteractiveMockup() {
             flowDone ? 'text-[#FAFAFA]' : 'text-[var(--text-subtle)]',
           )}
         >
-          <span>Ricopiature manuali</span>
+          <span>Passaggi manuali</span>
           <span>0</span>
         </p>
       </Panel>
 
       {/* MODULO 2 — Architettura software custom */}
-      <Panel index={2} title="Architettura software custom">
+      <Panel
+        index={2}
+        label="Architettura software custom"
+        title="Software cucito sulle tue regole di calcolo"
+      >
         <div className="flex flex-1 flex-col justify-center">
           {ARCH_NODES.map((node, i) => (
             <div key={node}>
@@ -178,13 +196,17 @@ export function HeroInteractiveMockup() {
           ))}
         </div>
         <p className="mt-4 flex items-center justify-between border-t border-[var(--border-subtle)] pt-3 font-mono text-[11px] tracking-widest text-[#FAFAFA] uppercase">
-          <span>Latenza obiettivo</span>
+          <span>Tempo di risposta</span>
           <span>&lt; 40 ms</span>
         </p>
       </Panel>
 
       {/* MODULO 3 — Intelligenza Artificiale privata */}
-      <Panel index={3} title="Intelligenza Artificiale privata">
+      <Panel
+        index={3}
+        label="Intelligenza Artificiale privata"
+        title="Tutta la memoria della tua azienda, interrogabile in un secondo"
+      >
         <div className="flex flex-1 flex-col gap-3">
           <div className="ml-auto max-w-[90%] rounded-lg rounded-br-sm border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)] px-3 py-2 text-xs leading-relaxed text-[#FAFAFA]">
             {AI_QUESTION}
@@ -209,8 +231,8 @@ export function HeroInteractiveMockup() {
           </div>
         </div>
         <p className="mt-4 border-t border-[var(--border-subtle)] pt-3 text-xs leading-relaxed text-[var(--text-muted)]">
-          Modelli AI interrogabili dai dipendenti sui dati interni, senza dispersione di
-          informazioni su cloud pubblici.
+          I tuoi dipendenti interrogano l’intero archivio storico aziendale su un’infrastruttura
+          privata: i documenti non vengono caricati su chatbot pubblici.
         </p>
       </Panel>
     </div>
