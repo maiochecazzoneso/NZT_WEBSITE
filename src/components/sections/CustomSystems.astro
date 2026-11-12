@@ -14,10 +14,25 @@ import { customSystems } from '@/content/site';
 >
   <div class="mx-auto max-w-7xl px-6 lg:grid lg:grid-cols-12 lg:items-start lg:gap-12 lg:px-8">
     <div class="space-y-6 lg:sticky lg:top-32 lg:col-span-5" data-animate="fade-up">
-      <p class="font-mono text-xs tracking-widest text-[var(--text-muted)] uppercase">
-        {customSystems.badge}
-      </p>
-      <h2 id="sistemi-title" class="text-h2 text-[#FAFAFA]">{customSystems.title}</h2>
+      <h2
+        id="sistemi-title"
+        class="text-metallic text-display lg:text-[clamp(2.75rem,2.4vw+1rem,3.75rem)]"
+      >
+        {
+          // "Sistemi personalizzati" / "& White-Label": il trattino non deve spezzare la riga
+          customSystems.badge.split(' & ').map((part, i) =>
+            i === 0 ? (
+              part
+            ) : (
+              <>
+                {' '}
+                <span class="whitespace-nowrap">&amp; {part}</span>
+              </>
+            ),
+          )
+        }
+      </h2>
+      <p class="text-subhead text-[#E4E4E7]">{customSystems.title}</p>
       <p class="max-w-[52ch] text-lead text-[var(--text-muted)]">{customSystems.text}</p>
       <a
         href={customSystems.cta.href}

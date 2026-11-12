@@ -4,7 +4,7 @@
 import { visionMission } from '@/content/site';
 ---
 
-<section id="visione" aria-label="Visione e missione" class="py-24 sm:py-32">
+<section id="visione" aria-label="Vision e Mission" class="py-24 sm:py-32">
   <div class="mx-auto grid max-w-7xl grid-cols-1 gap-6 px-6 md:grid-cols-2 lg:gap-8 lg:px-8">
     {
       visionMission.map((card) => (
@@ -12,10 +12,11 @@ import { visionMission } from '@/content/site';
           data-animate="fade-up"
           class="specular-card flex flex-col rounded-2xl !border-white/10 p-8 sm:p-10"
         >
-          <p class="font-mono text-xs tracking-widest text-[var(--text-muted)] uppercase">
-            {card.label}
-          </p>
-          <h2 class="mt-8 text-h2 text-[#FAFAFA]">{card.title}</h2>
+          <span aria-hidden="true" class="font-mono text-sm text-[var(--text-subtle)]">
+            {card.index}
+          </span>
+          <h2 class="text-metallic mt-3 text-display">{card.label}</h2>
+          <p class="mt-6 text-subhead text-[#E4E4E7]">{card.title}</p>
           <p class="mt-6 text-lead text-[var(--text-muted)]">{card.text}</p>
         </article>
       ))

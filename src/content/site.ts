@@ -57,12 +57,14 @@ export const hero = {
 // ---------------------------------------------------------------------------
 export const visionMission = [
   {
-    label: '01 · Vision',
+    index: '01',
+    label: 'Vision',
     title: 'Sbloccare il 100% del potenziale della tua azienda.',
     text: 'Ogni impresa ha già dentro di sé le competenze e i dati per correre, ma usa solo una frazione della propria forza perché è frenata da lavoro manuale e programmi rigidi. Il nostro scopo è togliere questo freno e azzerare la distanza tra ciò che la tua azienda vale e ciò che riesce a produrre ogni giorno.',
   },
   {
-    label: '02 · Mission',
+    index: '02',
+    label: 'Mission',
     title: 'Portare innovazione avanzata, semplice da usare.',
     text: 'Cerchiamo le automazioni e i sistemi di Intelligenza Artificiale che molte aziende ancora non conoscono e li portiamo dentro i loro flussi di lavoro. La complessità ingegneristica resta nel nostro codice: al tuo team arrivano strumenti da usare dal primo giorno, che tolgono ore di lavoro manuale ogni settimana.',
   },
