@@ -9,11 +9,13 @@
     "start": "astro dev",
     "build": "astro check && astro build",
     "preview": "astro preview",
+    "serve": "HOST=0.0.0.0 node ./dist/server/entry.mjs",
     "astro": "astro",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
   "dependencies": {
+    "@astrojs/node": "^9.5.5",
     "@astrojs/react": "^4.2.0",
     "@astrojs/sitemap": "^3.2.0",
     "@fontsource/geist-mono": "^5.3.0",
