@@ -28,7 +28,7 @@ jobs:
     name: Segreti nel repository (Gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # l'intera cronologia: un segreto rimosso da un file resta nei commit
           persist-credentials: false
@@ -39,7 +39,7 @@ jobs:
     name: Dipendenze, lint, tipi, build, test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@v4
@@ -62,7 +62,7 @@ jobs:
     name: Immagine container (Trivy)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Configurazione del Dockerfile
