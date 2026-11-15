@@ -1,7 +1,7 @@
 {
   "extends": "astro/tsconfigs/strict",
   "include": [".astro/types.d.ts", "**/*"],
-  "exclude": ["dist"],
+  "exclude": ["dist", "coverage"],
   "compilerOptions": {
     "jsx": "react-jsx",
     "jsxImportSource": "react",
@@ -10,7 +10,8 @@
       "@/*": ["./src/*"],
       "@ui/*": ["./src/components/ui/*"],
       "@interactive/*": ["./src/components/interactive/*"],
-      "@sections/*": ["./src/components/sections/*"]
+      "@sections/*": ["./src/components/sections/*"],
+      "@server/*": ["./server/*"]
     }
   }
 }

@@ -1,0 +1,25 @@
+# Aggiornamenti automatici di sicurezza (docs/architettura_sicurezza_nzt_solutions.md §7)
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      astro:
+        patterns: ['astro', '@astrojs/*']
+      dev-tooling:
+        dependency-type: development
+        update-types: [minor, patch]
+
+  # Immagini base del Dockerfile (fissate per digest)
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
