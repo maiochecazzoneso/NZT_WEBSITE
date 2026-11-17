@@ -6,7 +6,9 @@ settings:
 
 importers:
 
-  .:
+  .: {}
+
+  apps/landing:
     dependencies:
       '@astrojs/react':
         specifier: ^4.2.0
