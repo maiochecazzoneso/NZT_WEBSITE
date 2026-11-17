@@ -22,12 +22,13 @@ from app.middleware import (
     ServerErrorGuardMiddleware,
 )
 from app.ratelimit import RateLimiter
-from app.routers import auth, downloads, google, health
+from app.routers import auth, downloads, google, health, verification
 from app.security.dpop import DPoPValidator
 from app.security.passwords import PasswordService
 from app.security.sealed import Sealer
 from app.security.tokens import AccessTokenService, load_signing_key
 from app.services.google import GoogleOIDCClient
+from app.services.mailer import build_mailer
 from app.services.sessions import SessionService
 from app.services.storage import Presigner
 
@@ -78,6 +79,7 @@ def build_services(
         sealer=Sealer.from_settings(settings),
         google=GoogleOIDCClient(settings, http),
         presigner=Presigner(settings),
+        mailer=build_mailer(settings),
     )
 
 
@@ -98,6 +100,7 @@ def create_app(
             yield
         finally:
             await services.http.aclose()
+            await services.mailer.aclose()
             await services.redis.aclose()
             await services.engine.dispose()
 
@@ -115,6 +118,7 @@ def create_app(
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(google.router)
+    app.include_router(verification.router)
     app.include_router(downloads.router)
 
     # Order: last added = outermost. Outer -> inner:

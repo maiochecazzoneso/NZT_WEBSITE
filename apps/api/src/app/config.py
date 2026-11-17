@@ -24,9 +24,14 @@ class Environment(StrEnum):
 
 
 SslMode = Literal["disable", "require", "verify-ca", "verify-full"]
+# Transactional email (email verification, AGGIUNTA). "resend" is the only production
+# backend; "console" (logs the message), "file" (one JSON file per message) and "memory"
+# (in-process outbox) are development/test-only and refused in production.
+MailBackend = Literal["resend", "console", "file", "memory"]
 
 _SEMVER = re.compile(r"^\d{1,4}\.\d{1,4}\.\d{1,4}$")
 _SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def _origin(url: str) -> str:
@@ -122,6 +127,14 @@ class Settings(BaseSettings):
     launcher_version: str = "1.0.0"
     launcher_sha256: str = "0" * 64
 
+    # --- Transactional email / email verification (AGGIUNTA) ---------------------------
+    mail_backend: MailBackend = "console"
+    resend_api_key: SecretStr | None = None
+    mail_from: str | None = None  # e.g. "NZT Solutions <noreply@nztsolutions.it>"
+    mail_file_dir: str | None = None  # only for mail_backend=file (development / E2E)
+    mail_http_timeout_seconds: float = Field(default=10.0, gt=0, le=30)
+    email_verification_ttl_seconds: int = Field(default=86_400, ge=3_600, le=172_800)
+
     # ---------------------------------------------------------------------------------
     @field_validator("portal_origins", "trusted_proxy_cidrs", "google_issuers", mode="before")
     @classmethod
@@ -162,6 +175,13 @@ class Settings(BaseSettings):
         v = v.lower()
         if not _SHA256_HEX.fullmatch(v):
             raise ValueError("launcher_sha256 must be 64 lowercase hex chars")
+        return v
+
+    @field_validator("mail_from")
+    @classmethod
+    def _check_mail_from(cls, v: str | None) -> str | None:
+        if v is not None and (_CONTROL_CHARS.search(v) or "@" not in v or len(v) > 255):
+            raise ValueError("mail_from must be 'Name <address>' or an address, one line")
         return v
 
     @field_validator("oauth_state_key")
@@ -230,6 +250,28 @@ class Settings(BaseSettings):
             raise ValueError("production requires an https NZT_STORAGE_ENDPOINT_URL")
         return self
 
+    @model_validator(mode="after")
+    def _mail_guards(self) -> Settings:
+        if self.is_production and self.mail_backend != "resend":
+            raise ValueError(
+                "production requires NZT_MAIL_BACKEND=resend "
+                "(console/file/memory mailers are development-only)"
+            )
+        if self.mail_backend == "resend":
+            missing = [
+                env
+                for name, env in (
+                    ("resend_api_key", "NZT_RESEND_API_KEY"),
+                    ("mail_from", "NZT_MAIL_FROM"),
+                )
+                if _is_blank(getattr(self, name))
+            ]
+            if missing:
+                raise ValueError(f"NZT_MAIL_BACKEND=resend requires {', '.join(missing)}")
+        if self.mail_backend == "file" and _is_blank(self.mail_file_dir):
+            raise ValueError("NZT_MAIL_BACKEND=file requires NZT_MAIL_FILE_DIR")
+        return self
+
     # --- derived ------------------------------------------------------------------------
     @property
     def is_production(self) -> bool:
@@ -244,6 +286,11 @@ class Settings(BaseSettings):
     @property
     def effective_google_redirect_uri(self) -> str:
         return self.google_redirect_uri or f"{self.portal_origins[0]}/auth/google/callback"
+
+    @property
+    def email_verification_page_url(self) -> str:
+        """Portal page that consumes the token; the token travels in the URL FRAGMENT."""
+        return f"{self.portal_origins[0]}/verifica-email"
 
 
 @lru_cache(maxsize=1)

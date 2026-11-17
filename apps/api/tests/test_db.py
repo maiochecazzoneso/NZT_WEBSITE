@@ -23,7 +23,7 @@ def test_migrations_downgrade_base_and_upgrade_head():
     buf = io.StringIO()
     cfg.stdout = buf
     command.current(cfg)
-    assert "0001 (head)" in buf.getvalue()
+    assert "0002 (head)" in buf.getvalue()
 
 
 def test_models_match_migrations():

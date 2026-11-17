@@ -1,5 +1,6 @@
 import { useSession } from '../auth/useSession';
 import { LoadingScreen } from '../components/LoadingScreen';
+import { VERIFY_EMAIL_PATH } from '../lib/emailVerification';
 import { GOOGLE_CALLBACK_PATH } from '../lib/oauthCallback';
 import { Redirect, usePathname } from '../lib/router';
 import { DashboardPage } from '../pages/DashboardPage';
@@ -7,12 +8,14 @@ import { GoogleCallbackPage } from '../pages/GoogleCallbackPage';
 import { LoginPage } from '../pages/LoginPage';
 import { NotFoundPage } from '../pages/NotFoundPage';
 import { RegisterPage } from '../pages/RegisterPage';
+import { VerifyEmailPage } from '../pages/VerifyEmailPage';
 
 export const ROUTES = {
   dashboard: '/',
   login: '/accedi',
   register: '/registrazione',
   googleCallback: GOOGLE_CALLBACK_PATH,
+  verifyEmail: VERIFY_EMAIL_PATH,
 } as const;
 
 export function App() {
@@ -31,6 +34,9 @@ export function App() {
       return path === ROUTES.login ? <LoginPage /> : <RegisterPage />;
     case ROUTES.googleCallback:
       return <GoogleCallbackPage />;
+    case ROUTES.verifyEmail:
+      // Pubblica: il link arriva per email e può essere aperto anche senza sessione.
+      return <VerifyEmailPage />;
     default:
       return <NotFoundPage />;
   }

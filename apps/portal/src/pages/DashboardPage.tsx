@@ -3,6 +3,7 @@ import { Button, Card } from '@nzt/ui';
 import { session } from '../auth/sessionInstance';
 import { Brand } from '../components/Brand';
 import { DownloadCard } from '../components/DownloadCard';
+import { VerificationNotice } from '../components/VerificationNotice';
 import { usePageHeading } from '../lib/usePageHeading';
 
 export function DashboardPage() {
@@ -41,6 +42,7 @@ export function DashboardPage() {
             Area Clienti
           </h1>
         </div>
+        <VerificationNotice />
         <div className="grid gap-6 lg:grid-cols-[1fr_2fr]">
           <Card
             spotlight={false}

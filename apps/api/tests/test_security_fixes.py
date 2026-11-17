@@ -445,6 +445,9 @@ def _prod(**over: Any) -> dict[str, Any]:
         "launcher_sha256": "ab" * 32,
         "database_sslmode": "verify-full",
         "trusted_proxy_cidrs": ["10.0.0.0/8"],
+        "mail_backend": "resend",
+        "resend_api_key": "re_test_key",
+        "mail_from": "NZT Solutions <noreply@nztsolutions.it>",
     }
     base.update(over)
     return base
@@ -552,6 +555,9 @@ def test_alembic_in_production_requires_migrations_url(monkeypatch: pytest.Monke
         "NZT_GOOGLE_CLIENT_SECRET": "secret",
         "NZT_STORAGE_ACCESS_KEY_ID": "a",
         "NZT_STORAGE_SECRET_ACCESS_KEY": "b",
+        "NZT_MAIL_BACKEND": "resend",
+        "NZT_RESEND_API_KEY": kwargs["resend_api_key"],
+        "NZT_MAIL_FROM": kwargs["mail_from"],
     }
     for name, value in env.items():
         monkeypatch.setenv(name, value)

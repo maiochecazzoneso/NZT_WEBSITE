@@ -4,13 +4,19 @@
 import { ApiError } from './http';
 
 export type ErrorContext =
-  'login' | 'register' | 'google-start' | 'google-callback' | 'session' | 'download' | 'logout';
+  | 'login'
+  | 'register'
+  | 'google-start'
+  | 'google-callback'
+  | 'session'
+  | 'download'
+  | 'logout'
+  | 'verify-email'
+  | 'resend-verification';
 
 export const DETAIL = {
   invalidCredentials: 'Invalid email or password',
   invalidDpop: 'Invalid DPoP proof',
-  unverifiedLocal:
-    'An account with this email already exists but is not verified. Verify the local account before signing in with Google.',
   accountDisabled: 'Account is disabled',
   googleEmailUnverified: 'Google account email is not verified',
   oauthStateExpired: 'OAuth state expired',
@@ -26,7 +32,9 @@ function rateLimited(error: ApiError, context: ErrorContext): string {
   const base =
     context === 'download'
       ? 'Hai raggiunto il limite di richieste di download.'
-      : 'Troppi tentativi in poco tempo.';
+      : context === 'resend-verification'
+        ? "Hai già richiesto più volte l'email di verifica."
+        : 'Troppi tentativi in poco tempo.';
   return error.retryAfterSeconds !== null && error.retryAfterSeconds > 0
     ? `${base} Riprova tra ${formatWait(error.retryAfterSeconds)}.`
     : `${base} Attendi qualche minuto e riprova.`;
@@ -73,9 +81,6 @@ export function describeError(error: unknown, context: ErrorContext): string {
       if (status === 503) return "L'accesso con Google non è al momento disponibile.";
       break;
     case 'google-callback':
-      if (status === 403 && detail === DETAIL.unverifiedLocal) {
-        return 'Esiste già un account con questa email non ancora verificato: accedi con email e password.';
-      }
       if (status === 403 && detail === DETAIL.accountDisabled) {
         return 'Questo account è disabilitato. Contatta NZT Solutions.';
       }
@@ -100,6 +105,15 @@ export function describeError(error: unknown, context: ErrorContext): string {
       if (status === 401) return 'La sessione è scaduta. Accedi di nuovo.';
       break;
     case 'logout':
+      break;
+    case 'verify-email':
+      // Token sconosciuto, già usato, scaduto o manomesso: un unico messaggio generico.
+      if (status === 400 || status === 422) {
+        return 'Il link di verifica non è valido o è scaduto. Accedi e richiedi una nuova email.';
+      }
+      break;
+    case 'resend-verification':
+      if (status === 401) return 'La sessione è scaduta. Accedi di nuovo.';
       break;
   }
   return 'Richiesta non riuscita. Riprova.';

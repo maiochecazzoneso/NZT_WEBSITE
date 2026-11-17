@@ -7,11 +7,12 @@ import hmac
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Cookie, Depends, Request
 from fastapi.responses import JSONResponse
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,16 +23,14 @@ from app.ratelimit import GOOGLE_AUTHORIZE_PER_IP, GOOGLE_CALLBACK_PER_IP
 from app.routers.auth import token_response
 from app.schemas import ErrorResponse, GoogleAuthorizeResponse, GoogleCallbackRequest, TokenResponse
 from app.security.sealed import SealError
+from app.services.email_verification import invalidate_pending_tokens
 from app.services.google import OAUTH_STATE_TTL_SECONDS, GoogleIdentity, OIDCError
+from app.services.sessions import SessionService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/auth/google", tags=["auth-google"])
 
-UNVERIFIED_LOCAL_ACCOUNT = (
-    "An account with this email already exists but is not verified. "
-    "Verify the local account before signing in with Google."
-)
 OAuthStateCookie = Annotated[str | None, Cookie(alias=OAUTH_STATE_COOKIE)]
 STATE_ALREADY_USED = "OAuth state already used"
 # Consumed-state markers outlive the sealed state's own validity (+ clock margin).
@@ -82,8 +81,47 @@ async def authorize(services: ServicesDep) -> JSONResponse:
     return response
 
 
-async def _resolve_user(db: AsyncSession, identity: GoogleIdentity) -> uuid.UUID | JSONResponse:
-    """Spec §5.3 account linking / pre-hijacking prevention."""
+@dataclass(frozen=True, slots=True)
+class ResolvedUser:
+    user_id: uuid.UUID
+    took_over: bool = False
+
+
+async def _take_over_unverified_account(
+    db: AsyncSession, sessions: SessionService, user_id: uuid.UUID
+) -> None:
+    """DEVIATION from spec §5.3 (decided, documented in architettura_sicurezza §11.3):
+    a VERIFIED Google identity (email_verified=true, proof of mailbox ownership) that
+    meets an UNVERIFIED local account for the same email takes control of it, instead of
+    being refused with 403 forever (review M2, account pre-hijacking). The unverified
+    local credential is neutralised: password removed, local identity deleted, pending
+    verification tokens deleted, EVERY refresh-token family revoked + user revocation
+    marker (already-issued access tokens die; the marker is moved again after commit by
+    the caller). Runs with the users row locked FOR UPDATE (see _resolve_user)."""
+    await db.execute(
+        delete(AuthIdentity)
+        .where(AuthIdentity.user_id == user_id, AuthIdentity.provider == "local")
+        .execution_options(synchronize_session=False)
+    )
+    await db.execute(
+        update(User)
+        .where(User.id == user_id)
+        .values(password_hash=None, is_verified=True)
+        .execution_options(synchronize_session=False)
+    )
+    await invalidate_pending_tokens(db, user_id)
+    await sessions.revoke_all_for_user(db, user_id, reason="google_takeover")
+    logger.warning(
+        "SECURITY: unverified local account %s taken over by a verified Google identity; "
+        "password removed and all sessions revoked",
+        user_id,
+    )
+
+
+async def _resolve_user(
+    db: AsyncSession, sessions: SessionService, identity: GoogleIdentity
+) -> ResolvedUser | JSONResponse:
+    """Spec §5.3 account linking / pre-hijacking prevention (+ takeover, see above)."""
     linked = await db.execute(
         select(User.id, User.is_active)
         .join(AuthIdentity, AuthIdentity.user_id == User.id)
@@ -91,19 +129,19 @@ async def _resolve_user(db: AsyncSession, identity: GoogleIdentity) -> uuid.UUID
     )
     row = linked.one_or_none()
     if row is not None:
-        return row.id if row.is_active else _fail(403, "Account is disabled")
+        return ResolvedUser(row.id) if row.is_active else _fail(403, "Account is disabled")
 
+    # FOR UPDATE: serialises with a concurrent password login (routers/auth.py re-checks
+    # the hash under the same lock) and with /verify-email (same lock order).
     existing = await db.execute(
-        select(User.id, User.is_verified, User.is_active).where(
-            func.lower(User.email) == identity.email
-        )
+        select(User.id, User.is_verified, User.is_active)
+        .where(func.lower(User.email) == identity.email)
+        .with_for_update()
     )
     user = existing.one_or_none()
     if user is not None:
         if not user.is_active:
             return _fail(403, "Account is disabled")
-        if not user.is_verified:
-            return _fail(403, UNVERIFIED_LOCAL_ACCOUNT)
         other_google = await db.execute(
             select(AuthIdentity.id).where(
                 AuthIdentity.user_id == user.id, AuthIdentity.provider == "google"
@@ -111,14 +149,16 @@ async def _resolve_user(db: AsyncSession, identity: GoogleIdentity) -> uuid.UUID
         )
         if other_google.first() is not None:
             return _fail(409, "Account already linked to a different Google identity")
+        took_over = not user.is_verified
+        if took_over:
+            await _take_over_unverified_account(db, sessions, user.id)
         db.add(
             AuthIdentity(
                 id=uuid.uuid4(), user_id=user.id, provider="google", provider_user_id=identity.sub
             )
         )
         await db.flush()
-        linked_id: uuid.UUID = user.id
-        return linked_id
+        return ResolvedUser(user.id, took_over=took_over)
 
     new_user = User(id=uuid.uuid4(), email=identity.email, password_hash=None, is_verified=True)
     db.add(new_user)
@@ -129,7 +169,7 @@ async def _resolve_user(db: AsyncSession, identity: GoogleIdentity) -> uuid.UUID
         )
     )
     await db.flush()
-    return new_user.id
+    return ResolvedUser(new_user.id)
 
 
 @router.post(
@@ -138,7 +178,7 @@ async def _resolve_user(db: AsyncSession, identity: GoogleIdentity) -> uuid.UUID
     responses={
         400: {"model": ErrorResponse, "description": "State mismatch / IdP rejection"},
         401: {"model": ErrorResponse, "description": "Invalid DPoP proof"},
-        403: {"model": ErrorResponse, "description": "Unverified local account / disabled"},
+        403: {"model": ErrorResponse, "description": "Account disabled"},
         409: {"model": ErrorResponse},
         502: {"model": ErrorResponse},
         **_429,
@@ -197,14 +237,19 @@ async def callback(
         return _fail(exc.status, exc.description)
 
     try:
-        resolved = await _resolve_user(db, identity)
+        resolved = await _resolve_user(db, services.sessions, identity)
     except IntegrityError:
         await db.rollback()
         return _fail(409, "Account linking conflict, please retry")
     if isinstance(resolved, JSONResponse):
         await db.rollback()
         return resolved
-    issued = await services.sessions.create_session(db, user_id=resolved, jkt=proof.jkt)
+    if resolved.took_over:
+        # Commit the takeover first, then kill every access token issued up to now and
+        # only then create the owner's session (see SessionService docstring).
+        await db.commit()
+        await services.sessions.kill_user_access_tokens_after_commit(resolved.user_id)
+    issued = await services.sessions.create_session(db, user_id=resolved.user_id, jkt=proof.jkt)
     await db.commit()
     response = token_response(
         issued, status_code=200, refresh_ttl=services.settings.refresh_token_ttl_seconds

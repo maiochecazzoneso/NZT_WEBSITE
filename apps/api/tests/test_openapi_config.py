@@ -49,6 +49,10 @@ def test_openapi_matches_spec_section_8(app: FastAPI):
         "/api/v1/auth/google/authorize",
         "/api/v1/auth/google/callback",
         "/api/v1/downloads/launcher",
+        # Additions (email verification), see tests/test_email_verification.py
+        "/api/v1/auth/verify-email",
+        "/api/v1/auth/resend-verification",
+        "/api/v1/auth/me",
     }
     token = {"access_token", "token_type", "expires_in"}
 
@@ -117,6 +121,9 @@ def test_production_defaults_verify_full_and_rejects_disable():
         "oauth_state_key": key,
         "launcher_sha256": "ab" * 32,
         "trusted_proxy_cidrs": ["10.0.0.0/8"],
+        "mail_backend": "resend",
+        "resend_api_key": "re_test_key",
+        "mail_from": "NZT Solutions <noreply@nztsolutions.it>",
     }
     ok = make_settings(**common, database_sslmode=None)
     assert ok.effective_db_sslmode == "verify-full"

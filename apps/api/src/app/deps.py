@@ -26,6 +26,7 @@ from app.security.passwords import PasswordService
 from app.security.sealed import Sealer
 from app.security.tokens import AccessTokenError, AccessTokenService
 from app.services.google import GoogleOIDCClient
+from app.services.mailer import Mailer
 from app.services.sessions import SessionService
 from app.services.storage import Presigner
 
@@ -46,6 +47,7 @@ class Services:
     sealer: Sealer
     google: GoogleOIDCClient
     presigner: Presigner
+    mailer: Mailer
 
 
 def get_services(request: Request) -> Services:

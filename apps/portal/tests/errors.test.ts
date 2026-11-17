@@ -43,7 +43,13 @@ describe('describeError', () => {
   it.each([
     [http(400, 'Registration failed'), 'register', /Registrazione non riuscita/],
     [http(422), 'register', /non rispettano i requisiti/],
-    [http(403, DETAIL.unverifiedLocal), 'google-callback', /non ancora verificato/],
+    [
+      http(400, 'Invalid or expired verification token'),
+      'verify-email',
+      /non è valido o è scaduto/,
+    ],
+    [http(422), 'verify-email', /non è valido o è scaduto/],
+    [http(401, 'Not authenticated'), 'resend-verification', /sessione è scaduta/],
     [http(403, DETAIL.accountDisabled), 'google-callback', /disabilitato/],
     [
       http(409, 'Account already linked to a different Google identity'),

@@ -92,6 +92,15 @@ class GoogleCallbackRequest(_Strict):
     state: str = Field(min_length=1, max_length=256)
 
 
+class VerifyEmailRequest(_Strict):
+    token: str = Field(min_length=1, max_length=128)
+
+
+class MeResponse(BaseModel):
+    email: str
+    is_verified: bool
+
+
 class DownloadResponse(BaseModel):
     download_url: str
     sha256: str

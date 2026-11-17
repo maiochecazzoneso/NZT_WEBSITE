@@ -34,6 +34,7 @@ the old semantics; they expire after access_ttl + 5 s."""
 
 from __future__ import annotations
 
+import asyncio
 import enum
 import re
 import uuid
@@ -242,6 +243,24 @@ class SessionService:
             .execution_options(synchronize_session=False)
         )
         await self._mark_revoked(USER_REVOKED_AFTER_MS.format(user_id))
+
+    async def kill_user_access_tokens_after_commit(self, user_id: uuid.UUID) -> None:
+        """Google takeover (email verification AGGIUNTA): called AFTER the transaction that
+        revoked every family of the user has COMMITTED. Moves the user marker to "now", so
+        any access token whose refresh consume ran before that commit is dead (a consume
+        after it cannot succeed: the family is revoked), then waits until the shared Redis
+        clock has passed the marker, so the session created next for the legitimate owner
+        is not caught by the same-millisecond fail-closed rule."""
+        marker = int(
+            await self._mark_script(
+                keys=[USER_REVOKED_AFTER_MS.format(user_id)], args=[self.access_ttl + 5]
+            )
+        )
+        for _ in range(1000):  # normally 0-2 iterations (1 ms resolution)
+            if await self.clock_ms() > marker:
+                return
+            await asyncio.sleep(0.001)
+        raise RuntimeError("Redis clock did not advance")  # pragma: no cover
 
     async def logout(self, db: AsyncSession, *, raw: str, jkt: str) -> bool:
         """Revoke the family of ``raw``. Returns False when the DPoP key does not match.

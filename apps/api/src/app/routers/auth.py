@@ -10,6 +10,7 @@ from fastapi import APIRouter, Body, Cookie, Depends, Request
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
+from starlette.background import BackgroundTask
 
 from app.cookies import REFRESH_COOKIE, clear_refresh_cookie, set_refresh_cookie
 from app.deps import DbSession, DPoPProofDep, ServicesDep, dpop_unauthorized
@@ -18,6 +19,11 @@ from app.models import AuthIdentity, User
 from app.ratelimit import LOGIN_PER_EMAIL, LOGIN_PER_IP, REFRESH_PER_FAMILY, REGISTER_PER_IP
 from app.schemas import ErrorResponse, LoginRequest, RegisterRequest, TokenResponse
 from app.security.passwords import PasswordHasherBusyError
+from app.services.email_verification import (
+    deliver,
+    issue_verification_token,
+    verification_email,
+)
 from app.services.sessions import IssuedSession, RefreshError, RefreshOutcome
 
 logger = logging.getLogger(__name__)
@@ -111,11 +117,23 @@ async def register(
         await db.rollback()
         # D-A12: generic failure, no "email already exists" message.
         return error_response(400, REGISTRATION_FAILED)
+    # Email verification (AGGIUNTA): the token row commits atomically with the account.
+    raw_token = await issue_verification_token(
+        db, user.id, ttl_seconds=services.settings.email_verification_ttl_seconds
+    )
     issued = await services.sessions.create_session(db, user_id=user.id, jkt=proof.jkt)
     await db.commit()
-    return token_response(
+    response = token_response(
         issued, status_code=201, refresh_ttl=services.settings.refresh_token_ttl_seconds
     )
+    # Sent AFTER the response (no added latency); a delivery failure never fails the
+    # registration (it is logged without recipient/body/link; the user can resend).
+    response.background = BackgroundTask(
+        deliver,
+        services.mailer,
+        verification_email(services.settings, to=payload.email, raw_token=raw_token),
+    )
+    return response
 
 
 @router.post(
@@ -142,6 +160,21 @@ async def login(
         await services.passwords.dummy_verify(payload.password)
         return error_response(401, INVALID_CREDENTIALS)
     if not await services.passwords.verify(row.password_hash, payload.password):
+        return error_response(401, INVALID_CREDENTIALS)
+    # Re-check under a row lock that the verified hash is still the current one: a Google
+    # takeover (routers/google.py) that removed this password concurrently either commits
+    # first (=> 401 here) or waits for this session to commit and then revokes it.
+    still_valid = await db.execute(
+        select(User.id)
+        .where(
+            User.id == row.id,
+            User.password_hash == row.password_hash,
+            User.is_active.is_(True),
+        )
+        .with_for_update()
+    )
+    if still_valid.scalar_one_or_none() is None:
+        await db.rollback()
         return error_response(401, INVALID_CREDENTIALS)
     if services.passwords.hasher.check_needs_rehash(row.password_hash):
         try:

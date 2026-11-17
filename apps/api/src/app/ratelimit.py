@@ -66,6 +66,11 @@ DOWNLOADS_PER_USER: Final = RateLimit("downloads:user", 10, 3600)
 # callback costs one server-side POST to Google's token endpoint per call.
 GOOGLE_AUTHORIZE_PER_IP: Final = RateLimit("google:authorize:ip", 20, 60)
 GOOGLE_CALLBACK_PER_IP: Final = RateLimit("google:callback:ip", 10, 60)
+# Addition (email verification): public token check per client IP; resend per user AND per
+# client IP (each resend sends one email).
+VERIFY_EMAIL_PER_IP: Final = RateLimit("verify_email:ip", 10, 60)
+RESEND_VERIFICATION_PER_USER: Final = RateLimit("resend_verification:user", 3, 3600)
+RESEND_VERIFICATION_PER_IP: Final = RateLimit("resend_verification:ip", 10, 3600)
 
 
 class RateLimitExceededError(Exception):

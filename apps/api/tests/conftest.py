@@ -43,6 +43,7 @@ MIGRATOR_DSN = f"postgresql://nzt_migrator:nzt_migrator_test@{PG_HOST}:{PG_PORT}
 REDIS_URL = os.environ.get("NZT_TEST_REDIS_URL", "redis://127.0.0.1:56379/15")
 DEFAULT_IP = "203.0.113.10"
 TABLES = (
+    "email_verification_tokens",
     "download_logs",
     "entitlements",
     "refresh_tokens",
@@ -72,6 +73,7 @@ def make_settings(**overrides: Any) -> Settings:
         "storage_secret_access_key": SecretStr("test-only-secret"),
         "launcher_version": "1.0.0",
         "launcher_sha256": "4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+        "mail_backend": "memory",
     }
     base.update(overrides)
     return Settings(_env_file=None, **base)  # type: ignore[call-arg]

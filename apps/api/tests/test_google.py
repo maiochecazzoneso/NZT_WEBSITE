@@ -133,17 +133,30 @@ async def test_existing_verified_account_is_linked(
     assert await migrator_conn.fetchval("SELECT count(*) FROM auth_identities") == 1
 
 
-async def test_unverified_local_account_blocked(
+async def test_unverified_local_account_taken_over(
     client: httpx.AsyncClient, fake_google: FakeGoogle, migrator_conn: asyncpg.Connection
 ):
-    await create_user(migrator_conn, "victim@domain.com", password_hash="x", is_verified=False)
+    """DEVIATION from spec §5.3 (was: 403): a verified Google identity takes control of an
+    UNVERIFIED local account (pre-hijacking fix). Full scenario with an attacker holding
+    live sessions: tests/test_email_verification.py::test_prehijack_google_takeover_*."""
+    user_id = await create_user(
+        migrator_conn, "victim@domain.com", password_hash="x", is_verified=False
+    )
+    await migrator_conn.execute(
+        "INSERT INTO auth_identities (user_id, provider, provider_user_id) "
+        "VALUES ($1, 'local', 'victim@domain.com')",
+        user_id,
+    )
     resp = await _flow(
         client, fake_google, {"sub": "g-3", "email": "victim@domain.com", "email_verified": True}
     )
-    assert resp.status_code == 403
-    assert "not verified" in resp.json()["detail"]
-    assert await migrator_conn.fetchval("SELECT count(*) FROM auth_identities") == 0
-    assert await migrator_conn.fetchval("SELECT count(*) FROM refresh_token_families") == 0
+    assert resp.status_code == 200, resp.text
+    user = await migrator_conn.fetchrow("SELECT * FROM users")
+    assert user["id"] == user_id
+    assert user["is_verified"] is True
+    assert user["password_hash"] is None
+    idents = await migrator_conn.fetch("SELECT provider, provider_user_id FROM auth_identities")
+    assert [tuple(r) for r in idents] == [("google", "g-3")]
 
 
 async def test_state_mismatch_400(client: httpx.AsyncClient, fake_google: FakeGoogle):

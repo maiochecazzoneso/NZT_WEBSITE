@@ -135,3 +135,20 @@ class DownloadLog(Base):
 
 
 Index("idx_download_audit", DownloadLog.user_id, DownloadLog.created_at.desc())
+
+
+class EmailVerificationToken(Base):
+    """Email verification (AGGIUNTA): single-use token, only its SHA-256 is stored."""
+
+    __tablename__ = "email_verification_tokens"
+
+    id: Mapped[uuid.UUID] = _pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = _created_at()
+
+    __table_args__ = (Index("idx_email_verification_user", "user_id"),)

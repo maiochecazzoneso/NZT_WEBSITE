@@ -134,6 +134,9 @@ async def test_docs_disabled_in_production(monkeypatch: pytest.MonkeyPatch):
         access_token_private_key_pem=pem,
         oauth_state_key="A" * 43,
         launcher_sha256="ab" * 32,
+        mail_backend="resend",
+        resend_api_key="re_test_key",
+        mail_from="NZT Solutions <noreply@nztsolutions.it>",
     )
     app = create_app(settings)
     # No lifespan needed: routing for docs is decided at construction time.
