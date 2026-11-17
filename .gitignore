@@ -13,20 +13,16 @@ yarn-error.log*
 pnpm-debug.log*
 
 
-# environment variables
+# environment variables (mai versionare segreti: solo .env.example)
 .env
-.env.production
+.env.*
+!.env.example
+
+# test
+coverage/
 
 # macOS-specific files
 .DS_Store
 
 # jetbrains setting folder
 .idea/
-
-# python (backend)
-__pycache__/
-*.pyc
-.venv/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/

@@ -1,0 +1,87 @@
+# Controlli di sicurezza bloccanti (docs/architettura_sicurezza_nzt_solutions.md §7).
+# Gira su ogni pull request, su ogni push a main e una volta a settimana: una vulnerabilità pubblicata
+# dopo l'ultimo commit viene così rilevata anche se il codice non è cambiato.
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+# Minimo privilegio: il workflow legge soltanto il repository
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks:v8.30.1
+  TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.76.2
+
+jobs:
+  secrets:
+    name: Segreti nel repository (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # l'intera cronologia: un segreto rimosso da un file resta nei commit
+          persist-credentials: false
+      - name: Gitleaks
+        run: docker run --rm -v "$PWD:/repo:ro" "$GITLEAKS_IMAGE" git /repo --redact --no-banner
+
+  app:
+    name: Dipendenze, lint, tipi, build, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Installa le dipendenze (lockfile bloccato)
+        run: pnpm install --frozen-lockfile
+      - name: Vulnerabilità delle dipendenze (alte e critiche)
+        run: pnpm audit --audit-level=high
+      - name: Lint
+        run: pnpm lint
+      - name: Controllo dei tipi e build
+        run: pnpm build
+      - name: Test di sicurezza (unitari e di integrazione)
+        run: pnpm test
+
+  container:
+    name: Immagine container (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Configurazione del Dockerfile
+        run: docker run --rm -v "$PWD:/repo:ro" "$TRIVY_IMAGE" config --exit-code 1 /repo/Dockerfile
+      - name: Build dell'immagine
+        run: docker build --build-arg PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA -t nzt-web:ci .
+      - name: Vulnerabilità dell'immagine (alte e critiche)
+        run: >
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE"
+          image --severity HIGH,CRITICAL --exit-code 1 nzt-web:ci
+      - name: L'origine risponde solo con il segreto
+        run: |
+          secret=$(openssl rand -hex 32)
+          docker run -d --name nzt --read-only --cap-drop=ALL --security-opt no-new-privileges \
+            -e ORIGIN_VERIFY_SECRET="$secret" -p 127.0.0.1:8080:8080 nzt-web:ci
+          for attempt in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8080/healthz >/dev/null && break
+            sleep 1
+          done
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/)" = 403
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H "X-Origin-Verify: $secret" http://127.0.0.1:8080/)" = 200
+          test "$(docker exec nzt id -u)" = 10001

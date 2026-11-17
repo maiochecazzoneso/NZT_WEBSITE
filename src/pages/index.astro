@@ -1,0 +1,24 @@
+---
+// Home NZT Solutions — layout snello (Direttive refactoring UI & Copy):
+// Hero → Visione & Missione → Sistemi su misura & White-Label → Prodotti → FAQ → Contatti.
+import MainLayout from '@/layouts/MainLayout.astro';
+import HeroSection from '@sections/HeroSection.astro';
+import VisionMission from '@sections/VisionMission.astro';
+import CustomSystems from '@sections/CustomSystems.astro';
+import ProductsShowcase from '@sections/ProductsShowcase.astro';
+import FaqSection from '@sections/FaqSection.astro';
+import CtaSection from '@sections/CtaSection.astro';
+import Footer from '@sections/Footer.astro';
+---
+
+<MainLayout>
+  <main>
+    <HeroSection />
+    <VisionMission />
+    <CustomSystems />
+    <ProductsShowcase />
+    <FaqSection />
+    <CtaSection />
+  </main>
+  <Footer />
+</MainLayout>

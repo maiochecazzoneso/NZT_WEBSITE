@@ -1,6 +1,6 @@
 # Stack completo per provare l'Area Clienti in locale:
 #   docker compose up --build
-# Landing  http://localhost:4321   Portale http://localhost:8080   API http://localhost:8000/docs
+# Landing  http://localhost:4321 (Home di main + pulsante Area Clienti -> /accedi)   Portale http://localhost:8080   API http://localhost:8000/docs
 # Email di verifica: stampate nei log dell'API (docker compose logs -f api). Google OAuth non configurato.
 # Solo credenziali di PROVA: non riutilizzare in produzione.
 name: nzt
@@ -74,11 +74,14 @@ services:
   landing:
     build:
       context: .
-      dockerfile: apps/landing/Dockerfile
+      dockerfile: Dockerfile
       args:
         PUBLIC_CLIENT_AREA_URL: http://localhost:8080
+        PUBLIC_TURNSTILE_SITE_KEY: 1x00000000000000000000AA   # chiave di TEST Cloudflare
+    environment:
+      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA   # chiave di TEST Cloudflare
     ports:
-      - "4321:80"
+      - "4321:8080"
 
 volumes:
   pgdata:

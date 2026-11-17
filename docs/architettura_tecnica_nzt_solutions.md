@@ -13,7 +13,7 @@ L'architettura di **NZT Solutions** è progettata attorno a quattro pilastri non
 1. **Zero-JS di Default (HTML First):** L'intera struttura semantica, i testi commerciali, le intestazioni (`h1-h6`) e le sezioni statiche vengono compilati in HTML/CSS puro in fase di build. I crawler di Google ricevono il contenuto completo istantaneamente senza dover eseguire JavaScript.
 2. **Idratazione Selettiva ad Isole (Islands Architecture):** Il codice JavaScript (React, Motion, 3D) viene scaricato ed eseguito **solo** per i singoli componenti interattivi e **solo** quando l'utente scorre fino a renderli visibili (`client:visible`) o quando il thread principale del browser è libero (`client:idle`).
 3. **Mockup UI nel DOM invece di Video/GIF:** Come su *pnote.it*, le dimostrazioni dei servizi e dei software di NZT Solutions non useranno file video pesanti, ma componenti HTML/CSS/React animati che simulano dashboard, notifiche, flussi di lavoro e grafici interattivi. Questo garantisce nitidezza vettoriale su ogni schermo, peso inferiore a pochi kilobyte e testo indicizzabile.
-4. **Design System Condivisibile (Future-Proof):** Tutti i componenti atomici dell'interfaccia (bottoni, badge, input, card, modali, token di colore) sono scritti in **React + Tailwind CSS** e isolati nel pacchetto condiviso del monorepo `packages/ui` (`@nzt/ui`, sorgenti in `packages/ui/src`), importato sia dalla landing (`apps/landing`) sia dall'Area Clienti (`apps/portal`, `clienti.nztsolutions.it`): l'intero sistema grafico è riutilizzato senza riscrivere una riga di codice.
+4. **Design System Condivisibile (Future-Proof):** Tutti i componenti atomici dell'interfaccia (bottoni, badge, input, card, modali, token di colore) sono scritti in **React + Tailwind CSS** e isolati in una cartella dedicata (`src/components/ui`). Quando nascerà l'Area Clienti (`clienti.nztsolutions.it`), l'intero sistema grafico potrà essere riutilizzato al 100% senza riscrivere una riga di codice.
 
 ### Target Prestazionali (Performance Budget)
 * **Google PageSpeed Insights (Mobile & Desktop):** $98 - 100 / 100$
@@ -50,7 +50,7 @@ L'architettura di **NZT Solutions** è progettata attorno a quattro pilastri non
 * **Tipografia:** `@fontsource` (font ospitati localmente nel progetto in formato `.woff2` con `font-display: swap` per azzerare le chiamate verso Google Fonts e garantire CLS pari a zero).
 * **Gestione Form Contatti:** `react-hook-form` + `zod` (validazione schema rigorosa) + **Astro Actions / Serverless Endpoint** integrato con **Resend** per l'invio email transazionale.
 * **SEO & Dati Strutturati:** `@astrojs/sitemap`, metadati OpenGraph nativi e iniezione automatica di schemi **JSON-LD** (`Organization`, `WebSite`, `Service`, `FAQPage`).
-* **Hosting:** **Railway** per landing, portale (`clienti.nztsolutions.it`) e API (`api.nztsolutions.it`), con deploy automatico ad ogni `git push` sul branch `main`.
+* **Hosting & Edge CDN:** **Cloudflare Pages** oppure **Vercel** (deploy automatico ad ogni `git push` sul branch `main`).
 
 ---
 
@@ -112,19 +112,12 @@ Questo è il manifesto completo delle dipendenze con cui inizializzare il reposi
 ## 4. Struttura delle Cartelle (File Tree Completo)
 
 La struttura è organizzata per separare nettamente:
-1. **`packages/ui/src/`** (pacchetto `@nzt/ui`, fuori da `apps/landing`): il Design System atomico in React condiviso con l'Area Clienti; in `apps/landing/src/components/ui/` resta solo `AnimationToggle.tsx`, specifico della landing.
+1. **`components/ui/`**: Il Design System atomico in React (pronto per essere condiviso con la futura Area Clienti).
 2. **`components/interactive/`**: Le "Isole" interattive stile *pnote.it* (mockup animati, simulazioni software, form).
 3. **`components/sections/`**: Le sezioni principali della Landing Page in formato `.astro` (statiche, SEO-first).
 
 ```text
-packages/ui/src/                      # [CONDIVISO: @nzt/ui] Componenti React puri usati da landing e portale
-├── Button.tsx                        # Bottone con varianti CVA
-├── Badge.tsx · Card.tsx · Input.tsx · Field.tsx · Alert.tsx
-├── cn.ts                             # Funzione `cn()` (clsx + tailwind-merge)
-├── styles/                           # tokens.css
-└── index.ts
-
-apps/landing/
+nzt-solutions-web/
 ├── public/
 │   ├── fonts/                        # Font custom .woff2 (se non su Fontsource)
 │   ├── favicons/                     # Favicon SVG, Apple Touch Icon, manifest
@@ -137,7 +130,11 @@ apps/landing/
 │   │   └── logos/
 │   │
 │   ├── components/
-│   │   ├── ui/                       # Solo componenti specifici della landing (i condivisi sono in packages/ui)
+│   │   ├── ui/                       # [RIUTILIZZABILI NELL'AREA CLIENTI] Componenti React puri
+│   │   │   ├── Button.tsx            # Bottone con varianti CVA (primary, secondary, ghost, glow)
+│   │   │   ├── Badge.tsx             # Pillole e tag di stato
+│   │   │   ├── Card.tsx              # Contenitore base con effetti spotlight/bordo luminoso
+│   │   │   ├── Input.tsx             # Campi di testo accessibili
 │   │   │   └── AnimationToggle.tsx   # Switch "Pausa/Attiva Animazioni" (stile pnote.it)
 │   │   │
 │   │   ├── interactive/              # [ISOLE REACT] Mockup UI interattivi nel DOM
@@ -167,6 +164,7 @@ apps/landing/
 │   │   └── MainLayout.astro          # guscio HTML, inizializzazione Lenis + GSAP e SEO
 │   │
 │   ├── lib/
+│   │   ├── utils.ts                  # Funzione `cn()` (clsx + tailwind-merge)
 │   │   ├── gsap-init.ts              # Setup centrale di GSAP ScrollTrigger + Lenis
 │   │   └── stores/
 │   │       └── uiStore.ts            # Nano Store per stato globale leggero (es. pausa animazioni, pacchetto selezionato)
@@ -400,22 +398,23 @@ export default defineConfig({
 
 ---
 
-## 9. Area Clienti (`clienti.nztsolutions.it`)
+## 9. Piano di Espansione Futura: Area Clienti (`clienti.nztsolutions.it`)
 
-L'Area Clienti è stata aggiunta seguendo questo piano: il design system della landing è stato estratto in un pacchetto condiviso senza modificare l'output della landing (build verificata identica).
+Questa architettura è stata progettata affinché l'aggiunta della futura Area Clienti avvenga a **costo di refactoring zero**.
 
-### Fase 1 (completata): Repository Singolo per la Landing Page
-* Il sito nasceva come repository singolo per `nztsolutions.it`.
-* Bottoni, badge e card erano creati in `src/components/ui/` usando solo React e Tailwind (senza dipendenze specifiche di Astro), il che ne ha permesso l'estrazione.
+### Fase 1 (Oggi): Repository Singolo per la Landing Page
+* Il sito vive su `nztsolutions.it` ed è distribuito gratuitamente su Edge CDN (Cloudflare Pages o Vercel).
+* Tutti i bottoni, badge, input e card vengono creati dentro `src/components/ui/` usando solo React e Tailwind (senza dipendenze specifiche di Astro).
 
-### Fase 2 (implementata): Monorepo `pnpm workspaces` e `clienti.nztsolutions.it`
-* **Struttura del monorepo:**
-  * `apps/landing` — sito Astro pubblico (`nztsolutions.it`).
-  * `apps/portal` — Area Clienti, SPA React 19 + Vite (`clienti.nztsolutions.it`).
-  * `apps/api` — backend FastAPI (`api.nztsolutions.it`): autenticazione locale e Google, sessioni DPoP con refresh token rotation, distribuzione protetta del Launcher.
-  * `packages/ui` — design system condiviso `@nzt/ui` (Button, Card, Badge, Input, Field, Alert, `tokens.css`), importato da landing e portale (`import { Button } from '@nzt/ui'`). Sostituisce `src/components/ui/{Button,Card,Badge}.tsx` e `src/lib/utils.ts` citati nelle sezioni precedenti.
-* **DNS:** il record principale resta sulla landing; `clienti` e `api` puntano ai rispettivi servizi (target di hosting: Railway). Il pulsante **"Area Clienti"** della Navbar punta già a `https://clienti.nztsolutions.it`.
-* **Sicurezza:** l'architettura di sicurezza dell'Area Clienti come implementata (topologia, modello delle minacce, DPoP, cookie, rate limit, configurazione e runbook) è descritta in [`architettura_sicurezza_area_clienti.md`](./architettura_sicurezza_area_clienti.md); la specifica di partenza è [`specifiche_architetturali_area_clienti_nzt_solutions.md`](./specifiche_architetturali_area_clienti_nzt_solutions.md).
+### Fase 2 (Futuro): Creazione di `clienti.nztsolutions.it`
+Quando deciderai di aprire l'Area Clienti, avrai due opzioni immediate:
+1. **Condivisione immediata del Design System (Monorepo `pnpm workspaces`):**
+   * Sposti la cartella `src/components/ui` in un pacchetto condiviso `packages/ui`.
+   * Sia la landing (`apps/landing` in Astro) sia il portale clienti (`apps/portal` in Next.js o React Vite) importano esattamente gli stessi componenti (`import { Button, Card } from '@nzt/ui'`).
+2. **Configurazione DNS (Zero costi di dominio):**
+   * Nel pannello DNS di `nztsolutions.it`, mantieni il record principale `@` puntato alla CDN della landing page.
+   * Aggiungi un singolo record `CNAME` per `clienti` che punta all'applicazione dell'Area Clienti.
+   * Nella Navbar della landing page ti basterà attivare il pulsante **"Area Clienti"** che punta a `https://clienti.nztsolutions.it`.
 
 ---
 
@@ -425,7 +424,7 @@ L'Area Clienti è stata aggiunta seguendo questo piano: il design system della l
    * Eseguire `pnpm create astro@latest nzt-solutions-web` (template vuoto, TypeScript `strict`).
    * Installare le dipendenze del `package.json` definito nella Sezione 3.
 2. **Step 2 — Setup Design System & Layout Base:**
-   * Configurare i font locali, la palette colori in `global.css`, `MainLayout.astro`, `BaseHead.astro` e i componenti base nel pacchetto condiviso `packages/ui/src/` (`Button.tsx`, `Card.tsx`, `Badge.tsx`, importati come `@nzt/ui`).
+   * Configurare i font locali, la palette colori in `global.css`, `MainLayout.astro`, `BaseHead.astro` e i componenti base in `src/components/ui/` (`Button.tsx`, `Card.tsx`, `Badge.tsx`).
 3. **Step 3 — Sviluppo Struttura Statica SEO (Scheletro HTML):**
    * Costruire tutte le sezioni `.astro` (`Navbar`, `HeroSection`, `ServicesSection`, `MethodSection`, `FaqSection`, `Footer`) con i testi definitivi e i tag semantici corretti. Verificare il punteggio Lighthouse 100/100.
 4. **Step 4 — Sviluppo Mockup Interattivi (Stile *pnote.it*):**
@@ -433,4 +432,4 @@ L'Area Clienti è stata aggiunta seguendo questo piano: il design system della l
 5. **Step 5 — Integrazione GSAP + Lenis & Controllo Animazioni:**
    * Collegare `gsap-init.ts` per le rivelazioni allo scroll e inserire il pulsante *"Pausa/Attiva Animazioni"* per accessibilità e performance.
 6. **Step 6 — Form di Contatto, SEO Finale e Deploy:**
-   * Collegare `ContactForm.tsx` all'endpoint email, validare i dati strutturati JSON-LD e pubblicare su Railway collegando il dominio `nztsolutions.it`.
+   * Collegare `ContactForm.tsx` all'endpoint email, validare i dati strutturati JSON-LD e pubblicare su Cloudflare Pages / Vercel collegando il dominio `nztsolutions.it`.

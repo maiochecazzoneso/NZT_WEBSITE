@@ -1,0 +1,30 @@
+# Nulla di ciò che segue deve entrare nel contesto di build (né quindi nell'immagine)
+.git
+.github
+node_modules
+dist
+.astro
+coverage
+
+# Segreti e configurazione locale
+.env
+.env.*
+!.env.example
+
+# Materiale non necessario al build
+docs
+shots
+tests
+*.md
+docker-compose.yml
+Dockerfile
+.dockerignore
+.pre-commit-config.yaml
+.idea
+.DS_Store
+
+# Il sito non usa il resto del monorepo (i package.json necessari sono copiati a parte)
+apps/api
+apps/portal/src
+apps/portal/tests
+packages/ui/src

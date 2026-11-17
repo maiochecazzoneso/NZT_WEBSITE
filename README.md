@@ -1,94 +1,66 @@
-# NZT Solutions
+# NZT_WEBSITE
+CREAZIONE DEL SITO WEB DI NZT SOLUTIONS
 
-Monorepo pnpm (workspaces) del progetto NZT Solutions.
+## Documentazione
 
-## Struttura
+I documenti di architettura sono in `docs/`:
 
-```
-.
-├── apps/
-│   ├── landing/   Sito pubblico (Astro 5, React, Tailwind 4)
-│   ├── portal/    Area Clienti (frontend: React 19, Vite 6, Tailwind 4, DPoP)
-│   └── api/       Backend Area Clienti (FastAPI, Python 3.12, PostgreSQL 16, Redis)
-├── packages/
-│   └── ui/        Design system condiviso @nzt/ui (usato da landing e portale)
-├── docs/          Specifiche e documentazione di progetto
-├── package.json
-└── pnpm-workspace.yaml   (apps/*, packages/*)
-```
+| Documento | Contenuto |
+| --- | --- |
+| `docs/architettura_tecnica_nzt_solutions.md` | Stack, struttura del progetto, isole, SEO |
+| `docs/architettura_grafica_nzt_solutions_v1_0.md` | Design system e linee guida grafiche |
+| `docs/architettura_sicurezza_nzt_solutions.md` | **Regole di sicurezza vincolanti**, stato di applicazione, checklist operativa, registro delle modifiche |
 
-## Requisiti
+Ogni modifica che tocca la sicurezza va riportata nel documento di sicurezza (sezione interessata,
+tabella di stato, registro delle modifiche).
 
-- Node.js 22
-- pnpm 10.28.0 (versione indicata in `packageManager`; con Corepack: `corepack enable`)
-
-## Installazione
-
-Dalla radice del repository:
+## Sviluppo e verifiche
 
 ```bash
 pnpm install
-```
-
-## Landing (`apps/landing`)
-
-Dalla radice:
-
-```bash
-pnpm dev:landing       # server di sviluppo Astro
-pnpm build:landing     # astro check + astro build (output in apps/landing/dist)
-pnpm preview:landing   # anteprima della build
-```
-
-Lint e formattazione di tutti i workspace:
-
-```bash
+pnpm dev          # server di sviluppo (http://localhost:4321)
 pnpm lint
-pnpm format
+pnpm build        # controllo dei tipi + build + hash per la Content Security Policy
+pnpm test         # test di sicurezza (quelli di integrazione richiedono il build)
+pnpm serve        # server di produzione in locale (node server/index.mjs)
 ```
 
-Ogni app contiene la propria configurazione ESLint/Prettier/TypeScript.
+## Deploy su Railway
 
-## Portal (`apps/portal`)
+Le pagine sono statiche (prerender); il server Node le serve e gestisce l'unica rotta dinamica,
+`POST /api/contact`. Railway costruisce l'immagine dal `Dockerfile` (vedi `railway.json`) e avvia
+`node server/index.mjs`: è il perimetro di sicurezza che avvolge il server di Astro (header di sicurezza,
+verifica dell'origine, limiti su metodi e corpo). Non avviare direttamente `dist/server/entry.mjs`.
+L'healthcheck è `GET /healthz`.
 
-Area Clienti (`clienti.nztsolutions.it`). Dalla radice:
+Variabili da impostare su Railway (vedi `.env.example`):
 
-```bash
-pnpm dev:portal        # server di sviluppo Vite
-pnpm build:portal      # typecheck + vite build (output in apps/portal/dist)
-pnpm preview:portal    # anteprima con gli header di produzione (CSP)
-pnpm --filter @nzt/portal test   # Vitest
-```
+| Variabile | Note |
+| --- | --- |
+| `PUBLIC_TURNSTILE_SITE_KEY` | Chiave pubblica Cloudflare Turnstile. Serve **al build**: dopo una modifica va rifatto il deploy |
+| `TURNSTILE_SECRET_KEY` | Chiave segreta Turnstile. Senza, in produzione il modulo non accetta invii |
+| `TURNSTILE_ALLOWED_HOSTNAMES` | Raccomandata: `nztsolutions.it,www.nztsolutions.it` |
+| `RESEND_API_KEY` | Senza, il modulo propone l'email precompilata |
+| `CONTACT_TO_EMAIL` | Destinatario delle richieste (default `info@nztsolutions.it`) |
+| `CONTACT_FROM_EMAIL` | Mittente, su un dominio verificato in Resend |
+| `ORIGIN_VERIFY_SECRET` | 64 caratteri esadecimali (`openssl rand -hex 32`). Se impostata, il sito risponde solo alle richieste che arrivano da Cloudflare con l'header `X-Origin-Verify`: va attivata **dopo** aver creato la regola su Cloudflare |
 
-Variabili di build: `VITE_API_BASE_URL`, `VITE_OAUTH_AUTHORIZE_ORIGINS`.
+Protezione del modulo contatti: Cloudflare Turnstile + campo honeypot + rate limit (5 invii ogni
+10 minuti per client, 30 email l'ora in totale, in memoria: una sola istanza). Le azioni da completare
+su Cloudflare, Railway, DNS e GitHub sono elencate nella checklist del documento di sicurezza (§11).
 
-## API (`apps/api`)
+## Area Clienti e stack di prova in Docker
 
-Backend FastAPI dell'Area Clienti (`api.nztsolutions.it`). Da `apps/api`:
+Il repo è un workspace pnpm: la Home è nella radice, l'Area Clienti è in `apps/portal` (frontend), `apps/api` (backend FastAPI) e `packages/ui` (design system condiviso). Il pulsante "Area Clienti" della Home porta a `/accedi` del portale (URL configurabile con `PUBLIC_CLIENT_AREA_URL` in build).
 
-```bash
-uv sync --frozen
-scripts/test-services.sh start      # PostgreSQL 16 + Redis di test (oppure docker-compose.test.yml)
-uv run pytest -q                    # suite contro PostgreSQL e Redis reali
-uv run ruff check . && uv run ruff format --check . && uv run mypy
-```
-
-Configurazione: variabili `NZT_*` (modello in `apps/api/.env.example`). Architettura e runbook di sicurezza: `docs/architettura_sicurezza_area_clienti.md`.
-
-## Stack completo in Docker (prova Area Clienti)
-
-Dalla radice, un solo comando builda e avvia tutto (PostgreSQL, Redis, migrazioni, API, portale, landing):
+Un solo comando builda e avvia tutto (PostgreSQL, Redis, migrazioni, API, portale, Home):
 
 ```bash
 docker compose up --build
 ```
 
-- Landing: http://localhost:4321 (bottone "Area Clienti" nella Hero e nella navbar)
-- Portale: http://localhost:8080
-- API: http://localhost:8000/docs
-- Le email di verifica sono stampate nei log: `docker compose logs -f api`. Google OAuth non è configurato.
+- Home: http://localhost:4321 · Portale: http://localhost:8080 · API: http://localhost:8000/docs
+- Le email di verifica sono nei log: `docker compose logs -f api`. Google OAuth non è configurato. Chiavi Turnstile di test.
 - Reset dei dati: `docker compose down -v`. Credenziali solo di prova.
-
-## Documentazione
-
-La documentazione (architettura grafica e tecnica, specifiche della hero e dell'Area Clienti) è in `docs/`.
+- Il vecchio compose di sviluppo della Home è `docker-compose.dev.yml`.
+- Script utili: `pnpm dev:portal`, `pnpm build:portal`, `pnpm test:portal`.

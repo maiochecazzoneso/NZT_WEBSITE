@@ -1,0 +1,23 @@
+---
+// Pagina 404 del sito. Sostituisce quella predefinita di Astro, che dichiara il framework in uso e i cui
+// stili inline non sono ammessi dalla Content Security Policy (docs/architettura_sicurezza_nzt_solutions.md §2.2).
+import MainLayout from '@/layouts/MainLayout.astro';
+import Footer from '@sections/Footer.astro';
+---
+
+<MainLayout
+  title="Pagina non trovata | NZT Solutions"
+  description="La pagina richiesta non esiste o è stata spostata."
+>
+  <main class="mx-auto min-h-[60vh] max-w-3xl px-6 pt-40 pb-24 lg:px-8">
+    <p class="font-mono text-xs tracking-widest text-[var(--text-subtle)] uppercase">Errore 404</p>
+    <h1 class="mt-4 text-h2 text-[#FAFAFA]">Pagina non trovata</h1>
+    <p class="mt-6 leading-relaxed text-[var(--text-muted)]">
+      La pagina che cerchi non esiste o è stata spostata.
+    </p>
+    <p class="mt-8">
+      <a href="/" class="text-[#FAFAFA] underline underline-offset-4">Torna alla home</a>
+    </p>
+  </main>
+  <Footer />
+</MainLayout>

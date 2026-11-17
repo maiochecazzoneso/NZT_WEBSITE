@@ -1,0 +1,6 @@
+# Segnalazione responsabile di vulnerabilità — RFC 9116
+# Da rinnovare prima della scadenza (docs/architettura_sicurezza_nzt_solutions.md §11)
+Contact: mailto:info@nztsolutions.it
+Expires: 2027-11-15T00:00:00.000Z
+Preferred-Languages: it, en
+Canonical: https://nztsolutions.it/.well-known/security.txt
