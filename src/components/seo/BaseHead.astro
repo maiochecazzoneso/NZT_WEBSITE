@@ -21,7 +21,8 @@ const imageURL = new URL(image, Astro.site).href;
 ---
 
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- viewport-fit=cover: il layout occupa anche l'area di notch / Dynamic Island; i margini sicuri sono in global.css -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>{title}</title>
 <meta name="description" content={description} />
 <link rel="canonical" href={canonicalURL} />

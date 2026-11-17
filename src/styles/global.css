@@ -63,12 +63,62 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+    /* iOS Safari non ingrandisce il testo in landscape (Preflight lo imposta solo con prefisso) */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    /* Nessuno scroll orizzontale accidentale. Sulla radice "hidden" viene propagato al viewport (non crea un
+       contenitore di scroll intermedio: position: sticky continua a funzionare); clip dove supportato. */
+    overflow-x: hidden;
+  }
+
+  @supports (overflow: clip) {
+    html,
+    body {
+      overflow-x: clip;
+    }
+  }
+
+  body {
+    min-height: 100vh; /* Fallback legacy */
+    min-height: 100dvh; /* Dynamic viewport height (barra URL di iOS Safari / Chrome Android) */
+    /* viewport-fit=cover: in landscape il notch / Dynamic Island occupa i lati. Lo sfondo resta a tutta
+       larghezza (stesso colore di tutte le sezioni), il contenuto rientra nell'area sicura. */
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  /* Media: mai deformati. Preflight imposta già max-width: 100% e height: auto; qui si evita che i figli
+     di un flex container (Safari/WebKit) vengano schiacciati o stirati sull'asse trasversale. */
+  img,
+  video,
+  canvas,
+  svg {
+    flex-shrink: 0;
+  }
+
+  img,
+  video {
+    object-fit: contain;
   }
 
   ::selection {
     background-color: #ffffff;
     color: #050505;
   }
+}
+
+/* Safe Area (notch, Dynamic Island, home indicator): da applicare a header, footer e barre fisse */
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.safe-area-x {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
 }
 
 /* Accelerazione GPU per evitare repaint durante lo scroll */
@@ -82,6 +132,7 @@
 .text-metallic {
   background: linear-gradient(180deg, #ffffff 0%, #ffffff 45%, #71717a 100%);
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
