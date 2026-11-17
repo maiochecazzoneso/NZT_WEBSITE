@@ -119,8 +119,9 @@ export const apiFetch: ApiFetcher = async <T>(request: ApiRequest): Promise<ApiR
       typeof (payload as { detail?: unknown }).detail === 'string'
         ? (payload as { detail: string }).detail
         : null;
-    // Nota: cross-origin Retry-After è leggibile solo se il backend lo espone (Access-Control-
-    // Expose-Headers). In caso contrario vale null e la UI mostra un messaggio generico.
+    // Retry-After cross-origin è leggibile perché il backend lo espone (Access-Control-Expose-
+    // Headers: Retry-After, anche su 413/429/5xx). Se manca o è illeggibile vale null e la UI
+    // mostra un messaggio generico.
     throw new ApiError(
       'http',
       response.status,

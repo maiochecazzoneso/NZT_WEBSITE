@@ -121,7 +121,7 @@ async def get_current_user(
     if proof.jkt != claims.jkt:
         raise dpop_unauthorized("DPoP key does not match token binding", error="invalid_token")
     if await services.sessions.is_access_token_revoked(
-        user_id=claims.sub, jkt=claims.jkt, iat=claims.iat
+        user_id=claims.sub, jkt=claims.jkt, iat=claims.iat, iat_ms=claims.iat_ms
     ):
         raise dpop_unauthorized("token revoked", error="invalid_token")
     result = await db.execute(

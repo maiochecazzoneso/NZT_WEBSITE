@@ -166,25 +166,25 @@ Riferimenti ai test: backend `apps/api/tests/<file>::<test>`, portale `apps/port
 | T1 | Furto access token (XSS, log) e riuso altrove | Token solo in memoria; DPoP: `cnf.jkt` = thumbprint della prova, `ath` = hash del token, prova firmata dalla chiave non estraibile | `portal/src/auth/tokenStore.ts`, `api/.../deps.py::get_current_user` | `test_dpop::test_resource_jkt_mismatch`, `test_resource_missing_ath`, `test_missing_and_invalid_ath`; `session.test` (web storage mai toccato); E2E 4 |
 | T2 | Furto cookie di refresh | Famiglia legata al `jkt`; rotazione richiede prova DPoP con la stessa chiave; mismatch = 401 senza consumare il token | `services/sessions.py::rotate`, `routers/auth.py::refresh` | `test_auth_flows::test_refresh_with_wrong_dpop_key`; E2E 9 |
 | T3 | Riuso di un refresh token già ruotato | Reuse detection: revoca di **tutte** le famiglie dell'utente + marker Redis che invalida gli access token già emessi | `services/sessions.py` | `test_reuse_detection_revokes_all_and_kills_access_tokens`, `test_concurrent_double_refresh_exactly_one_wins`, `test_expired_refresh_is_not_reuse` |
-| T4 | Replay di una prova DPoP | `jti` monouso (Redis `SET NX`, TTL 125 s), finestra `iat` ±60 s, `htm`/`htu` legati alla richiesta | `security/dpop.py` | `test_dpop::test_replayed_jti`, `test_proof_replay_at_endpoint`, `test_stale_and_future_iat`, `test_wrong_htm`, `test_wrong_htu_host_path_scheme` |
+| T4 | Replay di una prova DPoP | `jti` monouso (Redis `SET NX`, TTL 125 s), finestra `iat` ±60 s con tipo stretto (`NaN`/`Infinity`/booleani/stringhe/interi enormi ⇒ `401`, mai `500`), `htm`/`htu` legati alla richiesta; JWK in base64url canonico (una sola codifica ⇒ un solo `jkt` per chiave) | `security/dpop.py`, `security/jose_utils.py` | `test_dpop::test_replayed_jti`, `test_proof_replay_at_endpoint`, `test_stale_and_future_iat`, `test_wrong_htm`, `test_wrong_htu_host_path_scheme`; `test_security_fixes::test_l2_dpop_bad_iat_is_invalid_proof`, `test_l2_dpop_bad_iat_is_401_over_http`, `test_l2_dpop_malformed_htu_is_invalid_proof`, `test_i3_non_canonical_jwk_coordinates_rejected` |
 | T5 | Confusione di algoritmo/chiave JOSE | Solo `ES256` con JWK EC P-256 pubblica validata sulla curva; access token solo `EdDSA` con `kid` atteso e `typ=at+jwt`; Google solo `RS256` | `security/dpop.py`, `security/tokens.py`, `services/google.py` | `test_alg_none_rejected`, `test_hs256_rejected`, `test_rs256_rejected`, `test_es256_header_with_rsa_jwk_rejected`, `test_jwk_with_private_key_rejected`, `test_jwk_not_p256_rejected`, `test_resource_expired_and_forged_tokens` |
 | T6 | CSRF su endpoint con cookie | Header `DPoP` obbligatorio ⇒ preflight CORS ammesso solo dal portale; `SameSite=Strict`; i form cross-site non possono impostare header | `main.py` (CORS), `cookies.py` | `test_http_hardening::test_cors_preflight_portal_only`, `test_auth_flows::test_register_requires_dpop`, `test_auth_flows::test_logout_requires_cookie_and_dpop` |
-| T7 | CSRF / login CSRF su OAuth | `state` casuale in cookie AES-256-GCM `HttpOnly`, confronto a tempo costante; PKCE S256; `nonce` nell'ID token | `routers/google.py`, `security/sealed.py`, `services/google.py` | `test_google::test_state_mismatch_400`, `test_missing_or_forged_state_cookie_400`, `test_pkce_verifier_mismatch_rejected_by_idp`, `test_bad_nonce_rejected` |
+| T7 | CSRF / login CSRF su OAuth | `state` casuale in cookie AES-256-GCM `HttpOnly`, confronto a tempo costante; `state` **monouso** lato server (Redis `SET NX`); PKCE S256; `nonce` nell'ID token | `routers/google.py`, `security/sealed.py`, `services/google.py` | `test_google::test_state_mismatch_400`, `test_missing_or_forged_state_cookie_400`, `test_pkce_verifier_mismatch_rejected_by_idp`, `test_bad_nonce_rejected`; `test_security_fixes::test_l6_oauth_state_is_single_use` |
 | T8 | ID token Google falsificato o per altro client | Firma RS256 via JWKS Google, `iss` in allow-list, `aud` = client id, `exp`/`iat` (leeway 30 s), `email_verified` vero | `services/google.py` | `test_wrong_audience_and_issuer_rejected`, `test_expired_id_token_rejected`, `test_email_not_verified_rejected` |
-| T9 | Account pre-hijacking | Nessun collegamento automatico a un account locale non verificato (403); collegamento solo se verificato; un account può avere una sola identità Google (409) | `routers/google.py::_resolve_user` | `test_unverified_local_account_blocked`, `test_existing_verified_account_is_linked`, `test_new_user_created_verified`; E2E 12e |
-| T10 | Credential stuffing / brute force | Login 5/min per IP **e** 5/min per email; registrazione 3/h per IP; Argon2id costoso | `ratelimit.py`, `routers/auth.py` | `test_ratelimit::test_login_per_ip`, `test_login_per_email`, `test_register_per_ip`; E2E 14 |
+| T9 | Account pre-hijacking | Nessun collegamento automatico a un account locale non verificato (403); collegamento solo se verificato; un account può avere una sola identità Google (409); email Google canonicalizzata con la **stessa** funzione delle email locali (`schemas.py::canonical_email`) | `routers/google.py::_resolve_user`, `services/google.py` | `test_unverified_local_account_blocked`, `test_existing_verified_account_is_linked`, `test_new_user_created_verified`; `test_security_fixes::test_i5_idn_google_email_links_to_the_local_account`, `test_i5_invalid_google_email_rejected`; E2E 12e. **Residuo:** nessuna verifica email (R-2) |
+| T10 | Credential stuffing / brute force | Login 5/min per IP **e** 5/min per email; registrazione 3/h per IP; Google authorize 20/min e callback 10/min per IP; Argon2id costoso | `ratelimit.py`, `routers/auth.py`, `routers/google.py` | `test_ratelimit::test_login_per_ip`, `test_login_per_email`, `test_register_per_ip`; `test_security_fixes::test_l6_google_callback_rate_limited_per_ip`, `test_l6_google_authorize_rate_limited_per_ip`; E2E 14 |
 | T11 | Enumerazione account | Login: messaggio unico `Invalid email or password`; registrazione su email esistente: `400 Registration failed` generico | `routers/auth.py` | `test_register_existing_email_generic_failure`, `test_login_happy_path_and_wrong_password` |
 | T12 | Timing attack sul login | Verifica Argon2id fittizia (stessi parametri) se l'utente non esiste, è solo-Google o è disattivato | `security/passwords.py::dummy_verify` | `test_login_unknown_user_runs_dummy_verify`, `test_login_google_only_and_inactive_users_dummy_verify` (verificano che la verifica fittizia avvenga, non misurano i tempi) |
 | T13 | SQL injection | Solo SQLAlchemy Core/ORM con parametri (prepared statements asyncpg); `text()` solo costanti; ruolo applicativo senza DDL | tutto `src/app`, `scripts/db/roles.sql` | `test_db::test_no_string_built_sql`, `test_raw_text_sql_is_constant`, `test_app_role_cannot_ddl`, `test_migrator_is_not_superuser` |
 | T14 | SSRF / egress non controllato | Nessun URL fornito dall'utente raggiunge httpx o boto3; endpoint Google da configurazione; `follow_redirects=False`; presign senza rete | `main.py::build_services`, `services/google.py`, `services/storage.py` | Revisione del codice; nessun test dedicato |
 | T15 | Download non autorizzato / path traversal | DPoP + entitlement attivo + 10/h per utente; chiave del bucket solo da enum `Product` lato server; URL prefirmato 300 s | `routers/downloads.py`, `deps.py::require_entitlement`, `services/storage.py` | `test_downloads::test_entitlement_matrix`, `test_entitlement_missing_or_other_product`, `test_catalog_is_server_side_only`, `test_ratelimit::test_downloads_per_user`; E2E 5 |
 | T16 | Binario manomesso | SHA-256 restituito dal server e mostrato con istruzioni `Get-FileHash`; audit di ogni URL emesso | `services/storage.py`, `portal/src/components/DownloadCard.tsx` | `test_download_allowed`; E2E 5. **Firma Authenticode non implementata** (O-8) |
-| T17 | DoS via Argon2 (CPU/RAM) | Semaforo: max 2 hash/verifiche concorrenti (2 × 64 MiB); limiti per IP/email prima di Argon2; body max 16 KiB | `security/passwords.py`, `middleware.py` | `test_body_size_limit`, `test_body_size_limit_streamed`; **nessun test di carico** |
-| T18 | Spoofing di `X-Forwarded-For` | Header ignorato salvo peer in `NZT_TRUSTED_PROXY_CIDRS`; catena letta da destra saltando gli hop fidati; uvicorn con `--no-proxy-headers` | `client_ip.py` | `test_client_ip_default_ignores_forwarded_headers`, `test_client_ip_trusted_proxy_chain`, `test_spoofed_xff_cannot_evade_login_limit`, `test_trusted_proxy_xff_used_for_limits_and_audit` |
+| T17 | DoS via Argon2 (CPU/RAM) | Semaforo: max 2 hash/verifiche concorrenti (2 × 64 MiB); coda d'attesa **limitata** (`NZT_ARGON2_MAX_QUEUE`, default 8): oltre ⇒ `503` + `Retry-After: 1` immediato; limiti per IP/email prima di Argon2; body max 16 KiB | `security/passwords.py`, `errors.py`, `middleware.py` | `test_body_size_limit`, `test_body_size_limit_streamed`; `test_security_fixes::test_l4_password_queue_is_bounded_and_fails_fast`; misura dal vivo §22.1 |
+| T18 | Spoofing di `X-Forwarded-For` | Header ignorato salvo peer in `NZT_TRUSTED_PROXY_CIDRS`; tutte le righe dell'header unite; solo le 32 voci **più a destra** esaminate, da destra saltando gli hop fidati (nessun numero di voci falsificate a sinistra può scegliere l'IP); uvicorn con `--no-proxy-headers`; in produzione proxy fidati obbligatori salvo opt-in esplicito | `client_ip.py`, `config.py` | `test_client_ip_default_ignores_forwarded_headers`, `test_client_ip_trusted_proxy_chain`, `test_spoofed_xff_cannot_evade_login_limit`, `test_trusted_proxy_xff_used_for_limits_and_audit`; `test_security_fixes::test_m1_*`, `test_i2_all_x_forwarded_for_lines_are_combined` |
 | T19 | Indisponibilità di Redis usata per aggirare limiti o anti-replay | Fail-closed: errore Redis ⇒ `503` | `ratelimit.py`, `errors.py` | `test_redis_outage_fails_closed` |
 | T20 | XSS nel portale | CSP senza inline, Trusted Types, nessun sink DOM vietato (lint), nessuno script di terze parti | `portal/csp.config.ts`, `portal/eslint.config.js` | `csp.test`; E2E: 0 violazioni CSP/Trusted Types su tutta la suite |
 | T21 | Clickjacking | `frame-ancestors 'none'` + `X-Frame-Options: DENY` su API e portale | `middleware.py`, `csp.config.ts` | `test_security_headers_on_every_response`; `csp.test` |
-| T22 | Fuga di informazioni negli errori | Errori 422 senza `input`/`ctx`; 500 senza stack trace; il portale non mostra mai il `detail` del backend | `errors.py`, `middleware.py`, `portal/src/api/errors.ts` | `test_validation_errors_do_not_echo_input`, `test_unhandled_error_has_no_stacktrace`, `test_secrets_not_in_repr`; `errors.test`; E2E 11b |
+| T22 | Fuga di informazioni negli errori | Errori 422 senza `input`/`ctx`; 500 senza stack trace (generato dentro CORS da `ServerErrorGuardMiddleware`); il portale non mostra mai il `detail` del backend | `errors.py`, `middleware.py`, `portal/src/api/errors.ts` | `test_validation_errors_do_not_echo_input`, `test_unhandled_error_has_no_stacktrace`, `test_secrets_not_in_repr`; `test_security_fixes::test_i6_cors_headers_on_413_429_500`; `errors.test`; E2E 11b |
 | T23 | Open redirect dall'URL di autorizzazione | Origin dell'URL di autorizzazione in allow-list (`VITE_OAUTH_AUTHORIZE_ORIGINS`), solo https | `portal/src/lib/safeUrls.ts` | `safeUrls.test` |
 | T24 | Corsa tra schede sul refresh (falso positivo di reuse) | Web Lock `nzt_token_refresh` su ogni operazione che usa il cookie; `keepalive` | `portal/src/auth/session.ts`, `portal/src/api/http.ts` | `session.test` (inclusa controprova senza lock); E2E 8, 8f |
 | T25 | Utente disattivato con sessioni attive | Ogni richiesta protetta rilegge `users.is_active`; la rotazione rifiuta utenti inattivi | `deps.py`, `services/sessions.py` | `test_dpop::test_resource_inactive_user` |
@@ -228,7 +228,7 @@ Altri dettagli:
 | Salt | 16 byte da `os.urandom` (generato da argon2-cffi a ogni hash) | 16 byte |
 | Lunghezza hash | 32 byte | 32 byte |
 
-* Hash e verifica girano in un thread (`asyncio.to_thread`), mai sull'event loop, e sono limitati da un `asyncio.Semaphore(NZT_ARGON2_MAX_CONCURRENCY)` (default **2**): al massimo ~128 MiB di RAM per Argon2 in parallelo. Le richieste in eccesso attendono (latenza, non esaurimento di memoria).
+* Hash e verifica girano in un thread (`asyncio.to_thread`), mai sull'event loop, e sono limitati da un `asyncio.Semaphore(NZT_ARGON2_MAX_CONCURRENCY)` (default **2**): al massimo ~128 MiB di RAM per Argon2 in parallelo. Al massimo `NZT_ARGON2_MAX_QUEUE` (default **8**) chiamate possono **attendere** uno slot; oltre, la chiamata fallisce subito con `503 {"detail":"Service busy, please retry shortly"}` + `Retry-After: 1` (`PasswordHasherBusyError`), uguale per utenti esistenti e inesistenti (nessuna enumerazione). Prima la coda era illimitata: 100 login fasulli in parallelo portavano un login legittimo da ~0,1 s a ~6 s. Il rehash trasparente al login è *best effort*: se la coda è piena viene saltato.
 * **AGGIUNTA — rehash trasparente:** al login riuscito, se i parametri dell'hash memorizzato differiscono da quelli correnti (`check_needs_rehash`), l'hash viene ricalcolato e salvato.
 * Verificato da `test_openapi_config::test_argon2id_parameters_and_verify`.
 
@@ -302,12 +302,12 @@ Formato esatto della prova (JWS compatto `base64url(header).base64url(payload).b
 | 1 | Presenza e forma | Header `DPoP` presente, ≤ 4096 caratteri, esattamente 3 segmenti |
 | 2 | `typ` | Deve essere `dpop+jwt` |
 | 3 | `alg` | Deve essere esattamente `ES256` (`none`, HS*, RS*, ES384 rifiutati) |
-| 4 | `jwk` | Oggetto JSON; nessun membro privato (`d, p, q, dp, dq, qi, oth, k`); `kty=EC`, `crv=P-256`; `x`/`y` base64url stretto di 32 byte; punto valido sulla curva. Parser proprio, non il loader JWK generico di PyJWT |
+| 4 | `jwk` | Oggetto JSON; nessun membro privato (`d, p, q, dp, dq, qi, oth, k`); `kty=EC`, `crv=P-256`; `x`/`y` esattamente 43 caratteri base64url **canonici** (alfabeto `[A-Za-z0-9_-]`, niente padding/spazi, bit finali inutilizzati a zero: verificato ricodificando) = 32 byte; punto valido sulla curva. Una chiave ha quindi una sola rappresentazione e un solo `jkt`. Parser proprio, non il loader JWK generico di PyJWT |
 | 5 | Firma e claim richiesti | Verifica con la chiave della `jwk` e `algorithms=["ES256"]`; claim obbligatori `jti`, `htm`, `htu`, `iat` |
 | 6 | `jti` | Stringa di 8–256 caratteri |
 | 7 | `htm` | Uguale al metodo HTTP della richiesta |
 | 8 | `htu` | Normalizzato (schema e host minuscoli, porta di default esplicitata, path) e confrontato con `NZT_API_PUBLIC_BASE_URL` + path della richiesta. Query e fragment ignorati. **Mai** derivato da `Host` o `X-Forwarded-*` |
-| 9 | `iat` | Numerico (booleani rifiutati); `abs(now − iat) ≤ NZT_DPOP_IAT_LEEWAY_SECONDS` (default 60) |
+| 9 | `iat` | Numero JSON non booleano, **finito** (`NaN`/`Infinity`, accettati dal parser JSON di Python, rifiutati), nell'intervallo `[0, 2^31)` (gli interi enormi, che farebbero fallire `float()`, sono rifiutati prima di ogni calcolo); `abs(now − iat) ≤ NZT_DPOP_IAT_LEEWAY_SECONDS` (default 60), formulato in modo sicuro rispetto a `NaN`. Ogni tipo errato ⇒ `401`, mai `500`. `htu` non interpretabile (es. IPv6 senza `]`) ⇒ `401` |
 | 10 | `ath` | Solo se la richiesta porta un access token: presente e uguale (confronto a tempo costante) a `base64url(SHA-256(token))` |
 | 11 | `jkt` | Thumbprint RFC 7638 della JWK pubblica (verificato col vettore RFC 9449 `0ZcOCORZNYy-DWpqq30jZyJGHTN0d2HglBV3uiguA4I`) |
 | 12 | Anti-replay | Redis `SET dpop:jti:<sha256(jkt:jti)> 1 NX EX 125` (= 2 × leeway + 5); chiave già presente ⇒ `DPoP proof replayed`. Errore Redis ⇒ `503` (fail-closed) |
@@ -323,7 +323,7 @@ Formato esatto della prova (JWS compatto `base64url(header).base64url(payload).b
 3. Verifica dell'access token (§8.1).
 4. Validazione della prova **con** `ath`.
 5. `proof.jkt == cnf.jkt`, altrimenti `401 invalid_token`.
-6. Marker di revoca Redis `user_revoked_after:{user_id}` e `jkt_revoked_after:{jkt}`: token con `iat ≤ marker` ⇒ `401`.
+6. Marker di revoca Redis `user_revoked_after_ms:{user_id}` e `jkt_revoked_after_ms:{jkt}` (millisecondi, orologio Redis): token con `iat_ms ≤ marker` ⇒ `401` (§9.3).
 7. `users.is_active` riletto dal DB a ogni richiesta (AGGIUNTA): utente disattivato ⇒ `401`.
 
 ### 7.4 Errori DPoP
@@ -348,9 +348,9 @@ La RFC 9449 consente `400` sugli endpoint di token: si è scelto `401` ovunque p
 | :--- | :--- |
 | Formato | JWT firmato **EdDSA (Ed25519)**; chiave `NZT_ACCESS_TOKEN_PRIVATE_KEY_PEM` (PKCS#8 PEM) |
 | Header | `{"alg":"EdDSA","typ":"at+jwt","kid":"<thumbprint RFC 7638 della chiave pubblica>"}` |
-| Claim | `sub` (UUID utente), `iss` (= `NZT_API_PUBLIC_BASE_URL`), `iat`, `exp`, `jti` (UUIDv4), `cnf: {"jkt": "<thumbprint>"}` |
+| Claim | `sub` (UUID utente), `iss` (= `NZT_API_PUBLIC_BASE_URL`), `iat`, `exp`, `jti` (UUIDv4), `cnf: {"jkt": "<thumbprint>"}`, `iat_ms` (AGGIUNTA: istante di emissione in ms sull'orologio Redis, usato solo per ordinare il token rispetto ai marker di revoca, §9.3) |
 | TTL | `NZT_ACCESS_TOKEN_TTL_SECONDS`, default **600 s**, ammesso 300–600 |
-| Verifica | dimensione ≤ 4096; `alg` = EdDSA e `kid` = chiave corrente; `typ` = `at+jwt`; firma; `iss`; `exp` senza leeway; claim `sub, iss, exp, iat, jti` obbligatori; `cnf.jkt` stringa obbligatoria |
+| Verifica | dimensione ≤ 4096; `alg` = EdDSA e `kid` = chiave corrente; `typ` = `at+jwt`; firma; `iss`; `exp` senza leeway; claim `sub, iss, exp, iat, jti` obbligatori; `cnf.jkt` stringa obbligatoria; tipi stretti: `sub`/`jti` stringhe, `iat`/`exp`/`iat_ms` interi JSON non negativi (niente booleani, float o stringhe); token senza `iat_ms` (emessi prima della correzione) trattati come emessi all'ultimo ms del loro secondo |
 | Storage client | Solo memoria della scheda (`createTokenStore`, closure); mai web storage, cookie, URL o log |
 | Risposta | `{"access_token": "...", "token_type": "DPoP", "expires_in": 600}` |
 
@@ -378,7 +378,7 @@ Cancellazione: stesso nome e attributi con valore vuoto, `Max-Age=0; Expires=Thu
 
 La specifica chiede `__Host-refresh-token` e `__Host-oauth-state` con `Path=/api/v1/auth`. I browser accettano un cookie `__Host-` **solo** con `Secure`, senza `Domain` **e con `Path=/`**: con il path della specifica il cookie verrebbe scartato e l'autenticazione non funzionerebbe. Tra le due proprietà incompatibili è stato mantenuto il path ristretto (il cookie viaggia solo verso `/api/v1/auth/*`, mai verso `/api/v1/downloads` o altri path) e si è usato il prefisso `__Secure-` (il cookie può essere impostato solo da un'origine sicura con `Secure`). Il carattere host-only è garantito comunque dall'assenza di `Domain`.
 
-Cosa si perde rispetto a `__Host-`: un altro sottodominio di `nztsolutions.it` compromesso potrebbe impostare un cookie omonimo con `Domain=nztsolutions.it` (*cookie tossing*). L'effetto è limitato a un disservizio: un refresh token iniettato appartiene a una famiglia legata alla chiave DPoP dell'attaccante, quindi la rotazione con la chiave della vittima fallisce (`DPoP key does not match refresh token binding`) e non è possibile una *session fixation*. Mitigazione organizzativa: nessun contenuto controllato da terzi su sottodomini di `nztsolutions.it`.
+Cosa si perde rispetto a `__Host-`: un altro sottodominio di `nztsolutions.it` compromesso (es. un XSS sulla landing) potrebbe impostare un cookie omonimo con `Domain=nztsolutions.it` (*cookie tossing*). Effetti (revisione indipendente, L5): (a) **login CSRF via Google** — iniettando un `__Secure-oauth-state` ottenuto dall'attaccante e portando la vittima sul callback con `code`/`state` dell'attaccante, la vittima entra nell'account dell'attaccante (sessione legata alla chiave della vittima, identità dell'attaccante); (b) **logout forzato** — un `__Secure-refresh-token` fasullo produce `KEY_MISMATCH` e il portale scarta la chiave. Una *session fixation* del refresh token resta impossibile (la famiglia è legata alla chiave DPoP). Il `state` monouso (§11.2) non chiude (a), perché lo `state` dell'attaccante è ancora inutilizzato. **Punto aperto, decisione utente** (R-18): nomi `__Host-` con `Path=/`, rifiuto dei cookie di autenticazione duplicati, oppure legare lo state al `jkt` del browser che chiama `/authorize`. Mitigazione organizzativa nel frattempo: nessun contenuto controllato da terzi su sottodomini di `nztsolutions.it` e landing aggiornata (advisory Astro, §20).
 
 ### 8.4 SameSite e CSRF
 
@@ -411,13 +411,13 @@ Se nessuna riga è consumata, la riga viene riletta (dopo l'eventuale vincitore 
 | Stato rilevato | Esito | Risposta | Effetti |
 | :--- | :--- | :--- | :--- |
 | Token sconosciuto o malformato (non 43 caratteri base64url) | INVALID | `401 Invalid refresh token` + cookie cancellato | Nessuno |
-| `is_used = TRUE` | **REUSE** | `401 Refresh token reuse detected` + cookie cancellato | **Tutte** le famiglie non revocate dell'utente ⇒ `is_revoked=TRUE, revoked_reason='reuse_detected'`; marker Redis `user_revoked_after:{user_id}` = ora Unix (TTL = TTL access + 5 s); commit; log `SECURITY: refresh token reuse detected` |
+| `is_used = TRUE` | **REUSE** | `401 Refresh token reuse detected` + cookie cancellato | **Tutte** le famiglie non revocate dell'utente ⇒ `is_revoked=TRUE, revoked_reason='reuse_detected'`; commit; poi marker Redis `user_revoked_after_ms:{user_id}` = ora Redis in ms (TTL = TTL access + 5 s, §9.3); log `SECURITY: refresh token reuse detected` |
 | Famiglia revocata | REVOKED | `401 Invalid refresh token` + cookie cancellato | Nessuno |
 | Scaduto | EXPIRED | `401 Invalid refresh token` + cookie cancellato | **Non** è riuso: token non consumato, famiglia non revocata |
 | `jkt` della prova ≠ `dpop_jkt` della famiglia | KEY_MISMATCH | `401 DPoP key does not match refresh token binding` + `WWW-Authenticate: DPoP error="invalid_dpop_proof"` | Token **non** consumato, famiglia **non** revocata, cookie **non** cancellato |
 | Cookie assente | — | `401 Missing refresh token` | — |
 
-Nota: un token già usato presentato con una chiave diversa è classificato REUSE (il controllo `is_used` precede il controllo della chiave): chi ripresenta un cookie vecchio rubato fa scattare la revoca totale, come voluto dalla specifica.
+Nota: un token già usato presentato con una chiave diversa è classificato REUSE (il controllo `is_used` precede il controllo della chiave e della scadenza): chi ripresenta un cookie vecchio rubato fa scattare la revoca totale. Conseguenza (revisione indipendente, L1, **non corretta: decisione utente**): un singolo valore storico di refresh token già usato — anche scaduto, con qualunque chiave — revoca tutte le sessioni della vittima, ripetibile all'infinito (le righe usate non vengono mai eliminate). Vedi R-21.
 
 ### 9.3 Marker di revoca (AGGIUNTA)
 
@@ -425,10 +425,15 @@ Gli access token sono stateless; per renderli invalidabili prima della scadenza 
 
 | Chiave | Scritta da | Effetto | TTL |
 | :--- | :--- | :--- | :--- |
-| `user_revoked_after:{user_id}` | Reuse detection | Rifiuta ogni access token dell'utente con `iat ≤ marker` | TTL access + 5 s (605 s di default) |
-| `jkt_revoked_after:{jkt}` | Logout | Rifiuta ogni access token legato a quella chiave con `iat ≤ marker` | TTL access + 5 s |
+| `user_revoked_after_ms:{user_id}` | Reuse detection | Rifiuta ogni access token dell'utente con `iat_ms ≤ marker` | TTL access + 5 s (605 s di default) |
+| `jkt_revoked_after_ms:{jkt}` | Logout | Rifiuta ogni access token legato a quella chiave con `iat_ms ≤ marker` | TTL access + 5 s |
 
-Risoluzione di 1 secondo: un nuovo login nello stesso secondo della revoca ottiene un token rifiutato per al massimo 1 s (il portale ripete dopo un refresh). Verificato da `test_reuse_detection_revokes_all_and_kills_access_tokens` e, nel browser, da E2E 7 (`launcher:401, refresh:200, launcher:200` con marker `jkt` impostato).
+**Ordinamento al millisecondo su un unico orologio (correzione L3).** Prima marker e `iat` erano in secondi interi con confronto `≤`: un login legittimo nello **stesso secondo** di un logout o di una reuse detection riceveva un token già revocato. Ora:
+* il marker è scritto da uno script Lua che legge `TIME` di Redis **dopo** l'`UPDATE` di revoca (logout: dopo il commit; reuse: con i lock di riga ancora tenuti, commit subito dopo) e conserva il massimo tra valore esistente e nuovo (non arretra mai);
+* ogni access token porta `iat_ms` = `TIME` di Redis letto **prima** del lavoro DB che lo emette (consumo del refresh token in `rotate`, creazione della famiglia in `create_session`);
+* revocato ⇔ `iat_ms ≤ marker`.
+
+Quindi un token il cui consumo è avvenuto prima dell'`UPDATE` di revoca è sempre rifiutato (il suo istante precede il marker); un consumo successivo non può riuscire (famiglia revocata; uno concorrente attende il lock di riga e poi fallisce); un token emesso dopo la revoca è accettato anche nello stesso secondo; l'unico caso ambiguo (stesso millisecondo) è rifiutato (fail-closed). L'orologio Redis elimina la deriva tra repliche dell'API. `iat`/`exp` restano in secondi dall'orologio locale (validati da PyJWT). Compatibilità: i marker legacy in secondi (`user_revoked_after:*`, `jkt_revoked_after:*`, scritti da una replica non ancora aggiornata durante un deploy) sono ancora letti con la semantica precedente; scadono entro 605 s. Verificato da `test_reuse_detection_revokes_all_and_kills_access_tokens`, `test_security_fixes::test_l3_*` (orologio locale congelato: il re-login nello stesso secondo è accettato, il token precedente resta revocato) e, nel browser, da E2E 7 (marker legacy `jkt` ⇒ `launcher:401, refresh:200, launcher:200`).
 
 ### 9.4 Logout (AGGIUNTA: contratto)
 
@@ -438,7 +443,7 @@ La specifica cita `/logout` senza definirne il contratto. Implementato `POST /ap
 * Cookie assente ⇒ `401 Missing refresh token`.
 * Token malformato o sconosciuto ⇒ `204` (idempotente) con cookie cancellato.
 * Chiave della prova ≠ chiave della famiglia ⇒ `401 Invalid DPoP proof` (`invalid_dpop_proof`).
-* Altrimenti: famiglia revocata (`revoked_reason='logout'`), marker `jkt_revoked_after:{jkt}`, cookie cancellato, `204` senza body.
+* Altrimenti: famiglia revocata (`revoked_reason='logout'`), marker `jkt_revoked_after_ms:{jkt}`, cookie cancellato, `204` senza body.
 
 Lato portale (`session.ts::logout`): sotto il lock `nzt_token_refresh` chiama il logout, poi **elimina la chiave da IndexedDB anche se il server non è raggiungibile** (ogni cookie legato a quella chiave diventa definitivamente inutilizzabile), azzera la memoria e notifica le altre schede via `BroadcastChannel('nzt_auth')` con il solo messaggio `logout`. Verificato da `test_auth_flows::test_logout` e E2E 10 (204 con DPoP, chiave eliminata, cookie cancellato, altra scheda disconnessa, famiglia `logout`, replay del cookie precedente ⇒ 401).
 
@@ -510,6 +515,7 @@ Portale                         API                                  Google
 
 | Fase | Controllo | Errore |
 | :--- | :--- | :--- |
+| Authorize / Callback | Rate limit per IP (20/min authorize, 10/min callback; §14), valutato per primo | `429` + `Retry-After` |
 | Authorize | Google non configurato (`client_id`/`secret` assenti) | `503 Google sign-in not configured` |
 | Authorize | Parametri: `response_type=code`, `client_id`, `redirect_uri`, `scope=openid email profile`, `state`, `nonce`, `code_challenge`, `code_challenge_method=S256` | — |
 | Authorize (portale) | Origin dell'URL ∈ `VITE_OAUTH_AUTHORIZE_ORIGINS` (default `https://accounts.google.com`), solo https | Messaggio d'errore, nessuna navigazione |
@@ -517,13 +523,16 @@ Portale                         API                                  Google
 | Callback | Cookie di state presente, decifrabile (AAD `nzt-oauth-state-v1`, nonce GCM 12 byte), con campi tipizzati | `400 Invalid OAuth state` |
 | Callback | `exp` del sigillo non superato (300 s) | `400 OAuth state expired` |
 | Callback | `state` del body = `state` del sigillo, confronto a tempo costante | `400 Invalid OAuth state` (Google non viene contattato) |
+| Callback | `state` **monouso**: `SET oauth_state_used:<sha256(state)> 1 NX EX 360`; già consumato ⇒ rifiuto prima di contattare Google; errore Redis ⇒ `503` (fail-closed) | `400 OAuth state already used` |
 | Scambio codice | POST al token endpoint con `code_verifier` e client secret | non-200 ⇒ `400 Authorization code exchange failed`; errore di rete ⇒ `502 Identity provider unavailable`; JSON non valido ⇒ `502` |
 | ID token | Solo `RS256`; `kid` presente; chiave dal JWKS Google (cache 1 h, rilettura su `kid` sconosciuto al massimo ogni 60 s; scartate chiavi non RSA o con membri privati) | `400` / `502` se JWKS non disponibile |
 | ID token | `iss` ∈ `NZT_GOOGLE_ISSUERS`, `aud` = client id, `exp`/`iat` (leeway 30 s), claim `iss, aud, exp, iat, sub` obbligatori | `400 Invalid id_token` |
 | ID token | `nonce` = nonce del sigillo (tempo costante) | `400 Invalid id_token nonce` |
-| ID token | `email_verified` esattamente `true`; `email` e `sub` non vuoti, ≤ 255 | `400 Google account email is not verified` / `400` |
+| ID token | `email_verified` esattamente `true`; `sub` non vuoto, ≤ 255; `email` canonicalizzata con la **stessa** funzione delle email locali (`schemas.py::canonical_email`: trim, minuscole, `email-validator` con NFC e dominio IDNA `xn--` convertito nella forma Unicode, ≤ 255); email non valida | `400 Google account email is not verified` / `400 id_token has no usable email` |
 
-Il cookie di state viene cancellato a ogni esito del callback tranne il `401` DPoP. Lato portale, `code`/`state`/`error` sono letti una sola volta a livello di modulo e l'URL viene subito ripulito con `history.replaceState`; la POST di callback è una sola per caricamento di pagina; `Referrer-Policy: no-referrer` impedisce che il codice finisca in header `Referer` (E2E 12b, 12d).
+Il cookie di state viene cancellato a ogni esito del callback tranne il `401` DPoP e il `429`; lo `state` è comunque consumato lato server al primo callback valido, quindi un cookie+state ripresentato non raggiunge più il token endpoint di Google.
+
+**Decisione IDN/Unicode (I5).** Le email (locali e Google) sono salvate e confrontate nella forma restituita da `email-validator`: dominio in Unicode (`victim@xn--exmple-cua.com` ⇒ `victim@exämple.com`), NFC, minuscole; la parte locale non viene ulteriormente normalizzata (niente NFKC, niente rimozione di `+tag` o punti). Chiave di ricerca DB, chiave del rate limit per email e `users.email` sono la stessa stringa. Lato portale, `code`/`state`/`error` sono letti una sola volta a livello di modulo e l'URL viene subito ripulito con `history.replaceState`; la POST di callback è una sola per caricamento di pagina; `Referrer-Policy: no-referrer` impedisce che il codice finisca in header `Referer` (E2E 12b, 12d).
 
 ### 11.3 Collegamento account e pre-hijacking — CONFORME + AGGIUNTE
 
@@ -598,7 +607,9 @@ Cache-Control: no-store
 
 ### 13.2 CORS
 
-`apps/api/src/app/main.py`: `allow_origins = NZT_PORTAL_ORIGINS` (default solo `https://clienti.nztsolutions.it`), `allow_credentials=True`, metodi `GET, POST`, header `Authorization, Content-Type, DPoP`, **nessun header esposto** (`expose_headers=[]`), `max_age=600`. Un preflight da un origin non ammesso riceve `400` (`test_cors_preflight_portal_only`). Conseguenza: `Retry-After` non è leggibile dal portale (R-13).
+`apps/api/src/app/main.py`: `allow_origins = NZT_PORTAL_ORIGINS` (default solo `https://clienti.nztsolutions.it`), `allow_credentials=True`, metodi `GET, POST`, header `Authorization, Content-Type, DPoP`, unico header esposto `Retry-After` (`expose_headers=["Retry-After"]`), `max_age=600`. Un preflight da un origin non ammesso riceve `400` (`test_cors_preflight_portal_only`).
+
+Ordine dei middleware (dall'esterno): `SecurityHeaders → CORS → ServerErrorGuard → BodySizeLimit → app`. Anche il `413` del limite body e il `500` generico passano quindi da CORS: per gli origin ammessi tutte le risposte d'errore (413, 429, 500, 503) sono leggibili dal portale, che mostra l'attesa reale indicata da `Retry-After` (es. "Riprova tra 25 secondi."; `test_cors_simple_request_exposes_only_retry_after`, `test_security_fixes::test_i6_cors_headers_on_413_429_500`, E2E 14b/14c).
 
 ### 13.3 Altre protezioni dell'API
 
@@ -607,7 +618,8 @@ Cache-Control: no-store
 | Limite body | `NZT_MAX_REQUEST_BODY_BYTES` = 16384: controllo `Content-Length` e conteggio in streaming ⇒ `413 {"detail":"Request body too large"}` | `test_body_size_limit`, `test_body_size_limit_streamed` |
 | Modelli stretti | `extra="forbid"`, stringhe ≤ 4096; email ≤ 255, password ≤ 128, `code` ≤ 2048, `state` ≤ 256 | `test_openapi_matches_spec_section_8` |
 | Errori 422 sanificati | `{"detail":[{loc,msg,type}]}` senza `input`/`ctx` (le password non vengono mai ripetute) | `test_validation_errors_do_not_echo_input` |
-| Errori 500 | `{"detail":"Internal server error"}`; eccezione registrata solo lato server | `test_unhandled_error_has_no_stacktrace` |
+| Errori 500 | `{"detail":"Internal server error"}`; eccezione registrata solo lato server; generato da `ServerErrorGuardMiddleware` dentro CORS (la guardia di `SecurityHeadersMiddleware` resta come ultima difesa) | `test_unhandled_error_has_no_stacktrace`, `test_i6_cors_headers_on_413_429_500` |
+| Coda Argon2 piena | `503 {"detail":"Service busy, please retry shortly"}` + `Retry-After: 1` | `test_l4_password_queue_is_bounded_and_fails_fast` |
 | Documentazione | `/docs`, `/openapi.json` disattivati con `NZT_ENVIRONMENT=production` (404); `/redoc` sempre disattivato | `test_docs_disabled_in_production` |
 | Liveness | `GET /healthz`: `SELECT 1` + `PING` Redis ⇒ `200 {"status":"ok"}` / `503` | `test_healthz` |
 
@@ -638,7 +650,7 @@ Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
 
 ## 14. Rate limiting
 
-`apps/api/src/app/ratelimit.py`. Algoritmo *sliding window counter*: due bucket a finestra fissa (corrente e precedente, quest'ultimo pesato per la frazione ancora sovrapposta), controllo e incremento in un unico script Lua atomico che usa l'orologio del server Redis. Chiavi `rl:<regola>:<sha256(identificatore)[:32]>` (nessun dato personale in chiaro), scadenza `2 × finestra`. I valori sono quelli della specifica e sono **costanti nel codice**, non configurabili da env.
+`apps/api/src/app/ratelimit.py`. Algoritmo *sliding window counter*: due bucket a finestra fissa (corrente e precedente, quest'ultimo pesato per la frazione ancora sovrapposta), controllo e incremento in un unico script Lua atomico che usa l'orologio del server Redis. Chiavi `rl:<regola>:<sha256(identificatore)[:32]>` (nessun dato personale in chiaro), scadenza `2 × finestra`. I valori sono quelli della specifica (più i due limiti Google, AGGIUNTA) e sono **costanti nel codice**, non configurabili da env.
 
 | Endpoint | Limite | Chiave | Momento della valutazione |
 | :--- | :--- | :--- | :--- |
@@ -647,12 +659,15 @@ Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
 | `POST /api/v1/auth/register` | 3 / 3600 s | IP client | Prima di body e DPoP |
 | `POST /api/v1/auth/refresh` | 30 / 60 s | Famiglia (`family:<id>` cercata per hash del cookie); cookie sconosciuto/malformato ⇒ `anon:<ip>` | Prima della prova DPoP |
 | `GET /api/v1/downloads/launcher` | 10 / 3600 s | ID utente | Dopo l'autenticazione DPoP, prima del controllo entitlement |
-| `POST /api/v1/auth/logout`, `GET /google/authorize`, `POST /google/callback`, `GET /healthz` | **nessuno** | — | Punto aperto O-9 |
+| `GET /api/v1/auth/google/authorize` | 20 / 60 s (**AGGIUNTA** alla §9.2 della specifica) | IP client | Prima di tutto (cookie di state e URL non generati se superato) |
+| `POST /api/v1/auth/google/callback` | 10 / 60 s (**AGGIUNTA**) | IP client | Prima di body e prova DPoP: limita i POST server-side verso il token endpoint di Google |
+| `POST /api/v1/auth/logout`, `GET /healthz` | **nessuno** | — | Punto aperto O-9 (logout richiede cookie + prova DPoP della famiglia) |
 
 * Superamento ⇒ `429 {"detail":"Too many requests"}` + `Retry-After: <secondi>` (calcolato dallo script, minimo 1).
 * **Fail-closed (DEVIAZIONE/AGGIUNTA):** errore Redis ⇒ `503 {"detail":"Service temporarily unavailable"}` + `Retry-After: 5`. Vale anche per lo store anti-replay DPoP e per i marker di revoca: senza Redis nessun endpoint con DPoP risponde. Scelta deliberata: gli endpoint di autenticazione e download non devono mai diventare illimitati o riproducibili.
 * **DEVIAZIONE di forma:** la specifica parla di middleware; i limiti sono **dependency FastAPI** perché le chiavi richiedono identità già interpretate (email, famiglia, utente).
-* Verifica: `test_spec_values_are_exact`, un test per ogni regola, `test_sliding_window_recovers`, `test_redis_outage_fails_closed`; E2E 14 (`401×5, 429`).
+* Valori Google scelti così: `authorize` è economico (nessun egress) ma imposta un cookie, 20/min lascia margine a più schede/tentativi dietro uno stesso NAT; `callback` costa un POST verso Google, 10/min è il doppio del login per IP. Stesso algoritmo e stesso fail-closed (`503`) degli altri limiti.
+* Verifica: `test_spec_values_are_exact`, un test per ogni regola (inclusi `test_l6_google_callback_rate_limited_per_ip`, `test_l6_google_authorize_rate_limited_per_ip`), `test_sliding_window_recovers`, `test_redis_outage_fails_closed`; E2E 14 (`401×5, 429` con messaggio "Riprova tra N secondi").
 
 ---
 
@@ -661,7 +676,8 @@ Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
 `apps/api/src/app/client_ip.py`. L'IP del client alimenta i limiti per IP e la colonna `download_logs.ip_address`.
 
 * Default (`NZT_TRUSTED_PROXY_CIDRS` vuoto): si usa il peer TCP; `X-Forwarded-For` è **ignorato**.
-* Con CIDR configurati: l'header è considerato solo se il peer TCP appartiene a un CIDR fidato; la catena (massimo 32 voci) è letta **da destra a sinistra** saltando gli hop fidati; il primo indirizzo non fidato è il client. Voci non interpretabili ⇒ si usa l'ultimo indirizzo fidato. Le voci aggiunte dal client a sinistra sono quindi irrilevanti.
+* Con CIDR configurati: l'header è considerato solo se il peer TCP appartiene a un CIDR fidato; **tutte** le righe `X-Forwarded-For` sono unite nell'ordine ricevuto (RFC 9110 §5.3; prima si leggeva solo la prima riga, I2); si esaminano solo le **32 voci più a destra** (budget di parsing 8 KiB, sempre dalla destra), lette **da destra a sinistra** saltando gli hop fidati; il primo indirizzo non fidato è il client. Voci non interpretabili ⇒ si usa l'ultimo indirizzo fidato; 32 hop tutti fidati ⇒ il più a sinistra tra quelli esaminati. Le voci aggiunte dal client a sinistra sono quindi irrilevanti, qualunque sia il loro numero. **Correzione M1:** prima la catena era troncata con `[:32]`, cioè alle 32 voci più a **sinistra** (controllate dal client): con ≥ 32 voci falsificate l'IP reale usciva dalla finestra e il client sceglieva il proprio IP, aggirando tutti i limiti per IP e falsificando `download_logs.ip_address` (dal vivo: 8 registrazioni su 8 accettate invece di 3).
+* Produzione: è obbligatorio `NZT_TRUSTED_PROXY_CIDRS` **oppure** l'opt-in esplicito `NZT_DIRECT_CLIENT_CONNECTIONS=true` (nessun proxy davanti all'API); nessuno dei due o entrambi ⇒ l'avvio fallisce (§17.1).
 * Nessun peer noto ⇒ `0.0.0.0` (segnaposto per l'audit).
 * **uvicorn va avviato con `--no-proxy-headers`**, altrimenti riscriverebbe da sé il peer prima della logica sopra.
 
@@ -684,11 +700,11 @@ Configurazione errata = rischio: CIDR vuoto dietro un proxy ⇒ tutti gli utenti
 
 ### 16.2 Migrazioni
 
-Alembic usa **solo** `NZT_MIGRATIONS_DATABASE_URL` (ruolo migrator; ripiego su `NZT_DATABASE_URL` se assente — in produzione va sempre impostata). Vanno eseguite come passo separato prima del deploy dell'API, mai dal processo applicativo.
+Alembic usa **solo** `NZT_MIGRATIONS_DATABASE_URL` (ruolo migrator; ripiego su `NZT_DATABASE_URL` se assente fuori produzione — in produzione la variabile è **obbligatoria per Alembic**: senza, il comando fallisce con un errore esplicito e non ripiega sul ruolo runtime; **non** è richiesta né desiderata dall'API, che non deve detenere le credenziali del migrator). Vanno eseguite come passo separato prima del deploy dell'API, mai dal processo applicativo.
 
-### 16.3 TLS verso PostgreSQL — DEVIAZIONE minore
+### 16.3 TLS verso PostgreSQL — CONFORME
 
-`apps/api/src/app/db.py`: `NZT_DATABASE_SSLMODE` ∈ `disable | require | verify-ca | verify-full`; default `verify-full` in produzione, `disable` altrove; TLS minimo 1.2; CA da `NZT_DATABASE_SSL_ROOT_CERT`. In produzione l'avvio fallisce con valori diversi da `verify-full` o `verify-ca` (la specifica richiede `verify-full`; `verify-ca` è accettato per reti private senza nome host certificato). Disponibilità di TLS sulla rete privata Railway: **NON VERIFICATO** (O-2).
+`apps/api/src/app/db.py`: `NZT_DATABASE_SSLMODE` ∈ `disable | require | verify-ca | verify-full`; default `verify-full` in produzione, `disable` altrove; TLS minimo 1.2; CA da `NZT_DATABASE_SSL_ROOT_CERT`. In produzione l'avvio fallisce con qualunque valore diverso da `verify-full` (`verify-ca`, `require` e `disable` rifiutati, come chiede la specifica). Disponibilità di TLS con nome host certificato sulla rete privata Railway: **NON VERIFICATO** (O-2); se non disponibile serve un endpoint con certificato verificabile, non un abbassamento del modo.
 
 ### 16.4 SQL injection — CONFORME
 
@@ -702,8 +718,8 @@ Tutte le query passano da SQLAlchemy Core/ORM con parametri legati (prepared sta
 
 * Tutta la configurazione arriva da variabili d'ambiente con prefisso `NZT_` (`pydantic-settings`, `apps/api/src/app/config.py`); un file `.env` locale è ignorato da git; `apps/api/.env.example` è il modello senza valori reali.
 * I segreti sono `SecretStr`: mai presenti in `repr` o nei log (`test_secrets_not_in_repr`). Una variabile vuota significa "usa il default", mai "segreto vuoto".
-* **Guardie di produzione** (`NZT_ENVIRONMENT=production`, `test_production_requires_secrets`, `test_production_rejects_missing_signing_key_at_startup`): l'avvio fallisce se mancano `ACCESS_TOKEN_PRIVATE_KEY_PEM`, `OAUTH_STATE_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`; se `LAUNCHER_SHA256` è il default di zeri; se `sslmode` non è `verify-full`/`verify-ca`; se API, portale o `STORAGE_PUBLIC_ORIGIN` non sono https.
-* **Non** controllati dalle guardie (da verificare manualmente al go-live): presenza di `NZT_DATABASE_URL`, `NZT_MIGRATIONS_DATABASE_URL`, `NZT_REDIS_URL` (i default puntano a servizi di test su `127.0.0.1`), `NZT_TRUSTED_PROXY_CIDRS`, schema https di `NZT_STORAGE_ENDPOINT_URL`.
+* **Guardie di produzione** (`NZT_ENVIRONMENT=production`, `test_production_requires_secrets`, `test_production_rejects_missing_signing_key_at_startup`, `test_security_fixes::test_prod_*`): l'avvio fallisce se mancano `ACCESS_TOKEN_PRIVATE_KEY_PEM`, `OAUTH_STATE_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`; se `LAUNCHER_SHA256` è il default di zeri; se `NZT_DATABASE_URL` o `NZT_REDIS_URL` non sono impostate **esplicitamente** (i default puntano ai servizi di test su `127.0.0.1`); se `sslmode` non è esattamente `verify-full`; se non è impostato `NZT_TRUSTED_PROXY_CIDRS` né l'opt-in `NZT_DIRECT_CLIENT_CONNECTIONS=true` (o se sono impostati entrambi); se API, portale, `STORAGE_PUBLIC_ORIGIN` o `NZT_STORAGE_ENDPOINT_URL` non sono https.
+* Perché un opt-in separato per "nessun proxy": una variabile vuota significa sempre "usa il default" (`env_ignore_empty`), quindi `NZT_TRUSTED_PROXY_CIDRS=` non può esprimere una scelta consapevole; dimenticare i CIDR dietro un proxy farebbe condividere a tutti gli utenti l'IP del proxy (limiti per IP globali, audit inutile).
 * Le variabili `VITE_*` del portale finiscono nel bundle pubblico: **mai segreti**.
 
 ### 17.2 Inventario variabili — API
@@ -715,18 +731,20 @@ Tutte le query passano da SQLAlchemy Core/ORM con parametri legati (prepared sta
 | `NZT_API_PUBLIC_BASE_URL` | | | `https://api.nztsolutions.it` | `iss`, base `htu`, CSP |
 | `NZT_PORTAL_ORIGINS` | | | `https://clienti.nztsolutions.it` | CORS (CSV), CSP, redirect Google di default |
 | `NZT_STORAGE_PUBLIC_ORIGIN` | | | `https://storage.nztsolutions.it` | Solo CSP `connect-src` |
-| `NZT_DATABASE_URL` | sì | sì (non controllata) | DSN di test `nzt_app@127.0.0.1:55432/nzt_test` | Ruolo runtime DML; `postgresql://` convertito in asyncpg; `sslmode` nella URL ignorato |
-| `NZT_MIGRATIONS_DATABASE_URL` | sì | sì per migrare | = `NZT_DATABASE_URL` | Ruolo migrator (solo Alembic) |
-| `NZT_DATABASE_SSLMODE` | | sì | `verify-full` in prod, `disable` altrove | TLS asyncpg |
+| `NZT_DATABASE_URL` | sì | **sì (esplicita)** | DSN di test `nzt_app@127.0.0.1:55432/nzt_test` | Ruolo runtime DML; `postgresql://` convertito in asyncpg; `sslmode` nella URL ignorato |
+| `NZT_MIGRATIONS_DATABASE_URL` | sì (solo per Alembic) | **no per l'API** (obbligatoria solo per Alembic) | = `NZT_DATABASE_URL` (fuori prod, solo Alembic) | Ruolo migrator (solo Alembic, passo di pre-deploy); **non** impostarla sul servizio API |
+| `NZT_DATABASE_SSLMODE` | | sì (`verify-full`) | `verify-full` in prod, `disable` altrove | TLS asyncpg; in prod solo `verify-full` |
 | `NZT_DATABASE_SSL_ROOT_CERT` | | se la CA non è di sistema | — | Path CA |
 | `NZT_DATABASE_POOL_SIZE` / `NZT_DATABASE_MAX_OVERFLOW` | | | `10` / `5` | Pool |
-| `NZT_REDIS_URL` | sì | sì (non controllata) | `redis://127.0.0.1:56379/0` | Limiti, `jti`, marker |
+| `NZT_REDIS_URL` | sì | **sì (esplicita)** | `redis://127.0.0.1:56379/0` | Limiti, `jti`, marker, `state` OAuth consumati, orologio dei marker |
 | `NZT_ACCESS_TOKEN_PRIVATE_KEY_PEM` | **sì** | **sì** | effimera in dev/test | Firma access token Ed25519 |
 | `NZT_ACCESS_TOKEN_TTL_SECONDS` | | | `600` (300–600) | TTL access token |
 | `NZT_REFRESH_TOKEN_TTL_SECONDS` | | | `604800` (3600–604800) | Scadenza refresh + `Max-Age` |
 | `NZT_DPOP_IAT_LEEWAY_SECONDS` | | | `60` (5–300) | Finestra `iat` |
 | `NZT_ARGON2_MAX_CONCURRENCY` | | | `2` (1–32) | Argon2 concorrenti |
-| `NZT_TRUSTED_PROXY_CIDRS` | | raccomandata | vuota | Proxy fidati (CSV) |
+| `NZT_ARGON2_MAX_QUEUE` | | | `8` (0–1024) | Chiamate Argon2 in attesa; oltre ⇒ `503` + `Retry-After: 1` |
+| `NZT_TRUSTED_PROXY_CIDRS` | | **sì** (o l'opt-in sotto) | vuota | Proxy fidati (CSV) |
+| `NZT_DIRECT_CLIENT_CONNECTIONS` | | alternativa ai CIDR | `false` | Opt-in esplicito "nessun proxy davanti all'API" (il peer TCP è il client); in prod esclusivo con `NZT_TRUSTED_PROXY_CIDRS` |
 | `NZT_MAX_REQUEST_BODY_BYTES` | | | `16384` (1024–1048576) | Limite body |
 | `NZT_GOOGLE_CLIENT_ID` | | **sì** | — (Google ⇒ 503) | Client OAuth |
 | `NZT_GOOGLE_CLIENT_SECRET` | **sì** | **sì** | — | Client OAuth |
@@ -735,7 +753,7 @@ Tutte le query passano da SQLAlchemy Core/ORM con parametri legati (prepared sta
 | `NZT_GOOGLE_ISSUERS` | | | `https://accounts.google.com,accounts.google.com` | `iss` ammessi |
 | `NZT_GOOGLE_HTTP_TIMEOUT_SECONDS` | | | `10` (≤ 30) | Timeout egress |
 | `NZT_OAUTH_STATE_KEY` | **sì** | **sì** | effimera in dev/test | AES-256-GCM, base64url di 32 byte |
-| `NZT_STORAGE_ENDPOINT_URL` | | sì (default inadatto a R2) | `https://storage.nztsolutions.it` | Endpoint S3 per la firma |
+| `NZT_STORAGE_ENDPOINT_URL` | | sì (default inadatto a R2; **https obbligatorio** in prod) | `https://storage.nztsolutions.it` | Endpoint S3 per la firma |
 | `NZT_STORAGE_REGION` | | | `auto` | Regione SigV4 |
 | `NZT_STORAGE_BUCKET` | | | `nzt-binaries` | Bucket |
 | `NZT_STORAGE_ACCESS_KEY_ID` / `NZT_STORAGE_SECRET_ACCESS_KEY` | **sì** | **sì** | fittizie in dev/test | Credenziali di **sola lettura** sul bucket |
@@ -803,8 +821,9 @@ Mai registrati: password, token, cookie, body delle richieste, URL prefirmati (i
 | Dipendenze runtime del portale | `react`, `react-dom`, `@nzt/ui` (clsx, tailwind-merge, class-variance-authority), font `@fontsource`; nessun router, form library o script di terze parti |
 | Dipendenze API | FastAPI, uvicorn, SQLAlchemy, asyncpg, Alembic, pydantic(-settings), email-validator, argon2-cffi, PyJWT[crypto], cryptography, redis, httpx, boto3 |
 | CI / audit automatici | **Assenti** nel repository |
+| Audit eseguito (revisione indipendente + correzioni) | `pip-audit` su `uv.lock`: nessuna vulnerabilità. `pnpm audit`: prima 26 advisory (3 critical, 8 high, 11 moderate, 4 low); dopo l'aggiornamento di `vitest` a 4.1.12 (solo strumento di test del portale: rimossi `tinypool` e `@vitest/mocker` vulnerabili; `vite` resta 6.4.5, nessun'altra versione cambiata) restano **21** (1 critical, 8 high, 8 moderate, 4 low), **tutte in `apps/landing`** (Astro, sharp, esbuild): aggiornamento della landing da pianificare (rilevante anche per §8.3) |
 
-Comandi di audit raccomandati (non ancora eseguiti né automatizzati):
+Comandi di audit raccomandati (non ancora automatizzati):
 
 ```bash
 pnpm audit --prod                                   # dipendenze JS di produzione
@@ -824,28 +843,28 @@ Raccomandato: job CI che esegue test, lint, i due audit e un aggiornamento contr
 | D2 | Domini | `https://api.nztsolutions.com`, CSP `https://*.nztsolutions.com` | Default `.it`, tutti configurabili; CSP con origin espliciti | Landing e portale sono `.it`; `SameSite=Strict` richiede API e portale same-site |
 | D3 | `download_logs.user_id` | `NOT NULL … ON DELETE SET NULL` | `NULL`-abile, `ON DELETE SET NULL` | Clausole incompatibili; l'audit deve sopravvivere alla cancellazione |
 | D4 | Prova DPoP | `htm`, `htu`, `jti`, `iat`, JWK | In più: solo ES256/P-256 con validazione della curva, `typ`, finestra `iat` ±60 s, `jti` monouso in Redis, `ath` obbligatorio sulle risorse; nessun `DPoP-Nonce`; errori sempre `401` | RFC 9449 (`ath` è richiesto dalla RFC per l'accesso alle risorse); difesa da replay e confusione di algoritmo |
-| D5 | Access token | RS256 o EdDSA; claim `sub, iss, exp, jti, cnf` | EdDSA (Ed25519); header `typ=at+jwt`, `kid`; claim `iat` in più; schema `Authorization` solo `DPoP` | Scelta ammessa; `iat` serve ai marker di revoca |
-| D6 | Reuse detection | Revoca della famiglia e "invalida ogni sessione attiva" | Revoca di **tutte** le famiglie dell'utente + marker Redis `user_revoked_after` | Rendere effettiva l'invalidazione anche degli access token già emessi |
-| D7 | Logout | Solo citato (§10) | Contratto definito: cookie + DPoP, `204`, idempotente, marker `jkt_revoked_after` | Lacuna della specifica |
+| D5 | Access token | RS256 o EdDSA; claim `sub, iss, exp, jti, cnf` | EdDSA (Ed25519); header `typ=at+jwt`, `kid`; claim `iat` e `iat_ms` in più; schema `Authorization` solo `DPoP` | Scelta ammessa; `iat_ms` (ms, orologio Redis) ordina il token rispetto ai marker di revoca senza falsi positivi nello stesso secondo (§9.3) |
+| D6 | Reuse detection | Revoca della famiglia e "invalida ogni sessione attiva" | Revoca di **tutte** le famiglie dell'utente + marker Redis `user_revoked_after_ms` | Rendere effettiva l'invalidazione anche degli access token già emessi (effetto collaterale R-21) |
+| D7 | Logout | Solo citato (§10) | Contratto definito: cookie + DPoP, `204`, idempotente, marker `jkt_revoked_after_ms` | Lacuna della specifica |
 | D8 | Concorrenza server | Non specificata | Rotazione atomica; il perdente di una corsa è trattato come riuso; scadenza ≠ riuso; mismatch di chiave non consuma il token | Nessuna finestra di grazia nella specifica |
 | D9 | Web Locks | Solo per il refresh | Stesso lock per tutte le operazioni sul cookie, lock separato per la chiave, `keepalive`, `BroadcastChannel` | Corse trovate in test ed E2E (§10) |
 | D10 | Chiave DPoP | Generata nel browser (implicitamente per sessione) | Persistita in IndexedDB, non estraibile, una per profilo | Senza persistenza un reload renderebbe orfana la sessione legata al `jkt` |
-| D11 | Rate limiting | Middleware | Dependency FastAPI, stessi valori, non configurabili; fallback `anon:<ip>` sul refresh | Le chiavi richiedono identità già interpretate |
+| D11 | Rate limiting | Middleware; login, registrazione, refresh, download | Dependency FastAPI, stessi valori, non configurabili; fallback `anon:<ip>` sul refresh; **in più** Google authorize 20/min e callback 10/min per IP | Le chiavi richiedono identità già interpretate; gli endpoint Google generano egress e cookie |
 | D12 | Indisponibilità Redis | Non specificata | Fail-closed `503` | Mai endpoint illimitati o riproducibili |
 | D13 | Politica password | ≥ 12, speciali, numeri | In più: almeno una lettera, massimo 128 | Evitare password solo numeriche/simboli; limitare l'input |
 | D14 | Timing | Dummy verify se l'utente non esiste | Anche per utenti solo-Google e disattivati | Stati indistinguibili |
 | D15 | Registrazione email esistente | Non specificata | `400 Registration failed` generico | Nessun messaggio "email già registrata" |
 | D16 | Google authorize | "Output: URL di redirect" | JSON `{"authorization_url": …}` | La SPA naviga dopo che il cookie di state è stato impostato via `fetch` |
-| D17 | Cookie di state OAuth | Contiene lo `state`, cifrato | AES-256-GCM con `state`, `code_verifier`, `nonce`, `exp` | PKCE e nonce lato server senza storage |
+| D17 | Cookie di state OAuth | Contiene lo `state`, cifrato | AES-256-GCM con `state`, `code_verifier`, `nonce`, `exp`; in più `state` monouso registrato in Redis al callback | PKCE e nonce senza storage di sessione; il replay del cookie non raggiunge più Google |
 | D18 | OIDC | PKCE, `state` | In più: `nonce`, `email_verified` obbligatorio, `409` per altro `sub`, `403` account disattivato, `503` se non configurato | Hardening OIDC |
 | D19 | Header HTTP | Insieme della §9.1 | Identico + `Cache-Control: no-store`; il portale ha una CSP propria più restrittiva con Trusted Types | Token e URL non devono essere memorizzati in cache |
-| D20 | TLS DB | `sslmode=verify-full` | Produzione: `verify-full` **o** `verify-ca` | Reti private senza hostname certificabile |
+| D20 | TLS DB | `sslmode=verify-full` | Produzione: solo `verify-full` (CONFORME; `verify-ca` non più accettato) | — |
 | D21 | Edge proxy | WAF, rate limiting L4/L7, TLS 1.3 | Nessun componente edge nel repository; TLS dall'edge Railway; rate limit applicativi | Fuori dal codice (O-1); **NON VERIFICATO** |
 | D22 | Egress confinato | Egress HTTPS confinato a Google e storage | Confinamento solo applicativo (URL da configurazione, nessun redirect); nessuna policy di rete; nessun egress verso lo storage (firma locale) | Railway non configurato nel repository |
 | D23 | Verifica integrità binario | Il client o l'interfaccia valida lo SHA-256 | Il portale mostra hash e istruzioni; nessuna verifica automatica | Il Launcher non è nel repository |
 | D24 | Python / client S3 | 3.11+, `aioboto3` o client REST | 3.12, `boto3` solo per firma locale | Nessuna I/O di rete da rendere asincrona |
 | D25 | Infrastruttura di test | testcontainers o docker-compose | `docker-compose.test.yml` + `scripts/test-services.sh` nativo | Il compose non è stato avviato nella sandbox (nessun Docker) |
-| D26 | Aggiunte di robustezza | — | `is_active` ricontrollato a ogni richiesta; limite body 16 KiB; 422 sanificati; docs disattivate in prod; `/healthz`; guardie di avvio in produzione; rehash trasparente | Hardening |
+| D26 | Aggiunte di robustezza | — | `is_active` ricontrollato a ogni richiesta; limite body 16 KiB; 422 sanificati; docs disattivate in prod; `/healthz`; guardie di avvio in produzione (anche DSN/Redis espliciti, proxy fidati o opt-in, storage https); rehash trasparente; coda Argon2 limitata con `503` + `Retry-After`; CORS su tutti gli errori ed esposizione di `Retry-After` | Hardening (incluse le correzioni della revisione indipendente) |
 
 ---
 
@@ -855,8 +874,8 @@ Raccomandato: job CI che esegue test, lint, i due audit e un aggiornamento contr
 
 | Controllo | Risultato |
 | :--- | :--- |
-| `uv run pytest -q` | **110 passed** (stabile su 3 esecuzioni consecutive; ripetuto dopo il commit) |
-| `ruff check` / `ruff format --check` | Nessun problema / 40 file formattati |
+| `uv run pytest -q` | **153 passed** (110 preesistenti, di cui 4 aggiornati per contratto cambiato intenzionalmente, + 43 di regressione in `test_security_fixes.py`, ognuno dei quali — salvo i controlli di non-regressione indicati nella relazione delle correzioni — fallisce sul codice precedente) |
+| `ruff check` / `ruff format --check` | Nessun problema / 41 file formattati |
 | `mypy` strict su `src/app` | Nessun errore (27 file) |
 | `alembic upgrade head` / `check` / `downgrade base` / `upgrade head` | OK, `No new upgrade operations detected.` |
 | Avvio uvicorn + `GET /healthz` | `200 {"status":"ok"}` con tutti gli header della §13.1 |
@@ -872,25 +891,28 @@ Raccomandato: job CI che esegue test, lint, i due audit e un aggiornamento contr
 | `test_openapi_config.py` | 10 | Contratti §8, configurazione, guardie di produzione, Argon2id, politica password |
 | `test_downloads.py` | 9 | Entitlement, audit, catalogo lato server, presign |
 | `test_db.py` | 8 | Migrazioni, schema, ruoli, assenza di SQL costruito con stringhe |
-| **Totale** | **110** | |
+| `test_security_fixes.py` | 43 | Regressioni della revisione indipendente: M1/I2 (X-Forwarded-For), L2 (tipi dei claim), L3 (marker al ms), L4 (coda Argon2), L6 (limiti Google, state monouso), I3, I5, I6, guardie di produzione |
+| **Totale** | **153** | |
+
+Misure dal vivo (uvicorn, `NZT_TRUSTED_PROXY_CIDRS=127.0.0.1/32`, 100 login fasulli in parallelo da 100 IP distinti, `NZT_ARGON2_MAX_CONCURRENCY=2`): prima della correzione un login legittimo impiegava 1,5–6,3 s (coda illimitata, login fasulli fino a 6,5 s); dopo, il login legittimo durante il picco riceve in 0,2–0,8 s un `503` con `Retry-After: 1` e, ripetuto dopo l'attesa indicata, riesce in 1,4–1,9 s totali; i login fasulli eccedenti sono scartati in ≤ 1,6 s. Registrazioni con 32 hop `X-Forwarded-For` falsificati: prima 8/8 accettate, dopo `201, 201, 201, 429…`. Prova DPoP con `iat: NaN`: prima `500`, dopo `401`.
 
 ### 22.2 Portale (`apps/portal`) — Vitest con WebCrypto reale
 
-**108 test in 12 file**, tutti superati: errors 22, passwordPolicy 30, session 14, contrast 8, dpop 7, csp 7, keyManager 4, thumbprint 4, tokenStore 4, oauthCallback 3, safeUrls 3, locks 2. ESLint, `tsc` strict e Prettier senza problemi su portal, ui e landing.
+**110 test in 12 file** (Vitest 4.1.12), tutti superati: errors 24, passwordPolicy 30, session 14, contrast 8, dpop 7, csp 7, keyManager 4, thumbprint 4, tokenStore 4, oauthCallback 3, safeUrls 3, locks 2. ESLint, `tsc` strict e Prettier senza problemi su portal, ui e landing.
 
 ### 22.3 End-to-end nel browser reale
 
-**65/65 controlli superati** in Chromium (Playwright) contro backend uvicorn reale, PostgreSQL 16, Redis 7, portale servito da `vite preview` con gli header di produzione e un IdP Google **simulato** (che applica PKCE S256 e credenziali client). Eseguito 5 volte sulla build finale, sempre verde; 0 violazioni CSP/Trusted Types, 0 errori console inattesi (13 righe `Failed to load resource 4xx` attese dai test negativi). Un'ulteriore esecuzione registrata dopo il commit `72e70ea` riporta 65 PASS.
+**66/66 controlli superati** in Chromium (Playwright) contro backend uvicorn reale, PostgreSQL 16, Redis 7, portale servito da `vite preview` con gli header di produzione e un IdP Google **simulato** (che applica PKCE S256 e credenziali client); 0 violazioni CSP/Trusted Types, 0 errori console inattesi. Rispetto alla versione precedente (65 controlli) il controllo 14b è stato invertito di proposito (ora `Retry-After` è leggibile) ed è stato aggiunto il 14c (il messaggio di 429 mostra l'attesa reale in secondi/minuti, uguale all'header).
 
-Scenari: (1) rotta protetta senza sessione, 0 chiamate API, header CSP e noindex; (2) accessibilità dei form; (3) validazione password lato client; (4) registrazione: DPoP 201, web storage vuoto, `document.cookie` vuoto, chiave P-256 non estraibile, `dpop_jkt` = thumbprint del browser, attributi del cookie; (5) download: 403 senza entitlement, poi URL prefirmato + 1 riga di audit; (6) reload: un solo refresh 200; (7) marker `jkt` ⇒ `401, refresh 200, 200`; (8) due schede e reload concorrenti, 8f navigazioni che interrompono il refresh; (9) cookie rubato con chiave dell'attaccante ⇒ 401, sessione legittima intatta; (10) logout completo e replay del cookie ⇒ 401; (11) password errata: messaggio generico, nessuna chiave residua; (12) Google: callback pulito, account locale non verificato ⇒ 403, `access_denied`; (13) 404; (14) `401×5, 429`, `Retry-After` non leggibile; (15) riduzione movimento; (16) mobile 390 px.
+Scenari: (1) rotta protetta senza sessione, 0 chiamate API, header CSP e noindex; (2) accessibilità dei form; (3) validazione password lato client; (4) registrazione: DPoP 201, web storage vuoto, `document.cookie` vuoto, chiave P-256 non estraibile, `dpop_jkt` = thumbprint del browser, attributi del cookie; (5) download: 403 senza entitlement, poi URL prefirmato + 1 riga di audit; (6) reload: un solo refresh 200; (7) marker `jkt` ⇒ `401, refresh 200, 200`; (8) due schede e reload concorrenti, 8f navigazioni che interrompono il refresh; (9) cookie rubato con chiave dell'attaccante ⇒ 401, sessione legittima intatta; (10) logout completo e replay del cookie ⇒ 401; (11) password errata: messaggio generico, nessuna chiave residua; (12) Google: callback pulito, account locale non verificato ⇒ 403, `access_denied`; (13) 404; (14) `401×5, 429`, messaggio "Riprova tra N secondi" con N = `Retry-After`; (15) riduzione movimento; (16) mobile 390 px.
 
-Ambiente E2E: API `http://localhost:18080`, portale `http://localhost:4173`, IdP finto `http://localhost:18090`; hostname `localhost` affinché Chromium accetti i cookie `Secure` su http e le due origini risultino same-site. **TLS non è stato quindi esercitato.**
+Ambiente E2E: API `http://localhost:18080`, portale `http://localhost:4173`, IdP finto `http://localhost:18090` (l'esecuzione delle correzioni ha usato porte isolate 18380/4373/18390 con PostgreSQL 55732 e Redis 56679); hostname `localhost` affinché Chromium accetti i cookie `Secure` su http e le due origini risultino same-site. **TLS non è stato quindi esercitato.**
 
 **Dove vive l'harness E2E:** `services.sh`, `fake_idp.py`, `portal-e2e.cjs` si trovano **solo nello scratchpad di sessione dell'agente che ha sviluppato il sistema, fuori dal repository e non persistente**. Non sono versionati né eseguiti in CI (O-P8): oggi gli E2E non sono riproducibili da un checkout del repository.
 
 ### 22.4 Landing
 
-Build della landing prima e dopo l'estrazione di `packages/ui`: **25 file su 25 identici** (sha256 dei file di `dist/`, esclusi `sitemap-0.xml` e `sitemap-index.xml`, che differiscono solo per `<lastmod>`).
+Build della landing prima e dopo l'estrazione di `packages/ui`: **25 file su 25 identici** (sha256 dei file di `dist/`, esclusi `sitemap-0.xml` e `sitemap-index.xml`, che differiscono solo per `<lastmod>`). Stesso risultato prima e dopo le correzioni della revisione (inclusa la modifica del lockfile per `vitest`).
 
 ### 22.5 Non verificato
 
@@ -905,24 +927,27 @@ Ordinati per priorità. "O-…" sono i punti aperti delle relazioni di implement
 | # | Priorità | Rischio / punto aperto | Effetto | Azione proposta |
 | :--- | :--- | :--- | :--- | :--- |
 | R-1 | Alta | **XSS nel portale** | Lo script può usare chiave e sessione finché la pagina è aperta (non esfiltrarle) | Mantenere CSP/Trusted Types, nessuno script di terze parti, revisione delle dipendenze |
-| R-2 | Alta | **Nessuna verifica email né reset password** (O-5, O-P5, O-P6) | Account locali mai verificati: login con email altrui possibile; un pre-registratore blocca l'accesso Google della vittima; nessun recupero account | Implementare verifica email e reset; fino ad allora non concedere entitlement a account locali senza verifica manuale dell'identità |
+| R-2 | Alta | **Nessuna verifica email né reset password** (O-5, O-P5, O-P6; revisione indipendente **M2**, non corretta: decisione utente) | Account locali mai verificati: login con email altrui possibile; un pre-registratore blocca l'accesso Google della vittima e, se lo staff concede una licenza cercando l'email, la riceve lui | Implementare verifica email e reset; quando arriva un'identità Google verificata per un account locale non verificato, neutralizzare la credenziale locale; fino ad allora non concedere entitlement a account locali senza verifica manuale dell'identità |
 | R-3 | Alta | **Deploy non definito** (O-1, O-2, O-4): Dockerfile, servizi Railway, CIDR proxy, TLS DB su rete privata, esposizione pubblica di Postgres/Redis | Configurazioni errate possono annullare limiti per IP, audit, isolamento della rete | Seguire la checklist §24.6; verificare il peer reale dell'edge |
 | R-4 | Alta (disponibilità) | **Finestra reload-durante-refresh** (O-P1) | Raro falso positivo di reuse ⇒ revoca di tutte le sessioni dell'utente | **Decisione utente pendente:** regola di grazia nel backend (riuso con la chiave della famiglia entro pochi secondi = benigno) |
 | R-5 | Media | Nessuna durata assoluta della sessione (O-6) | Una sessione usata almeno una volta a settimana dura indefinitamente | Durata massima della famiglia (es. 30 giorni) |
 | R-6 | Media | Rotazione della chiave di firma: un solo `kid` (O-6) | La rotazione invalida tutti gli access token (il portale recupera con un refresh) | Supporto a più chiavi di verifica / JWKS interno |
 | R-7 | Media | Launcher non firmato (O-8); hash solo mostrato | Manomissione non rilevata se l'utente non verifica | Firma Authenticode; pubblicare l'hash reale |
 | R-8 | Media | Logging di sicurezza minimo, nessun alerting, nessuna conservazione definita per `download_logs` | Indagini difficili; dati personali senza scadenza | Log strutturati (login falliti, mismatch, logout, reuse con ID utente), alert su reuse, politica di retention |
-| R-9 | Media | Nessun rate limit su logout, Google authorize/callback (O-9); nessun WAF | Superficie DoS, anche sulle chiamate verso Google | Limiti per IP; WAF/limiti all'edge (es. Cloudflare davanti a Railway) |
+| R-9 | Media | Nessun rate limit sul logout (O-9); nessun WAF; nessun limite globale (solo per IP/email/utente) | Superficie DoS residua (i limiti Google per IP e la coda Argon2 limitata sono ora presenti) | WAF/limiti all'edge (es. Cloudflare davanti a Railway) |
 | R-10 | Media | Blocco mirato del login (5/min per email) | Un attaccante può impedire il login di una vittima nota | Valutare limiti progressivi o CAPTCHA dopo soglia |
 | R-11 | Media | Nessuna CI; E2E fuori dal repository (O-P8) | Regressioni di sicurezza non intercettate | Pipeline con test backend/portale, E2E Playwright, audit dipendenze |
 | R-12 | Media | Nessun provisioning degli entitlement (O-7) | Concessioni via SQL manuale, soggette a errori | Strumento amministrativo con audit |
-| R-13 | Bassa | `Retry-After` non esposto via CORS (O-P2) | Il portale mostra un'attesa generica | `expose_headers=["Retry-After"]` |
+| R-13 | — | ~~`Retry-After` non esposto via CORS (O-P2)~~ **Risolto** | Il portale mostra l'attesa reale | — |
 | R-14 | Bassa | Nessun endpoint `/me` (O-P4) | La dashboard non mostra l'email | Aggiungere `GET /api/v1/me` protetto da DPoP |
 | R-15 | Bassa | `code` OAuth nei log di accesso dell'hosting statico | Codice monouso, legato a PKCE e allo state di 5 min | Accettato |
 | R-16 | Bassa | Orologio del dispositivo fuori di ±60 s | Login impossibile (messaggio dedicato) | Eventuale `DPoP-Nonce` |
 | R-17 | Bassa | Browser senza Web Locks o senza IndexedDB | Possibili logout spuri / nessuna sessione al reload | Accettato (browser evergreen supportati) |
-| R-18 | Bassa | Cookie tossing da sottodominio fratello | Solo disservizio (§8.3) | Nessun contenuto di terzi su `*.nztsolutions.it` |
-| R-19 | Bassa | Guardie di produzione non controllano DSN, Redis URL, `TRUSTED_PROXY_CIDRS`, https dello storage endpoint | Avvio con default di test (fallisce alla connessione) | Checklist §24.6; eventuale estensione delle guardie |
+| R-18 | Bassa (Media se la landing resta vulnerabile) | Cookie tossing da sottodominio fratello (revisione **L5**, non corretta: decisione utente) | Login CSRF via cookie di state OAuth e logout forzato (§8.3); nessuna session fixation | Decidere tra `__Host-` con `Path=/`, rifiuto dei cookie duplicati, state legato al `jkt`; nel frattempo nessun contenuto di terzi su `*.nztsolutions.it` e landing aggiornata |
+| R-19 | — | ~~Guardie di produzione incomplete~~ **Risolto**: DSN, Redis URL, proxy fidati (o opt-in), storage https e `verify-full` sono ora obbligatori | — | — |
+| R-21 | Bassa | **Replay di un refresh token storico** (revisione **L1**, non corretta: decisione utente) | Un valore già usato, anche scaduto, ripresentato con qualunque chiave revoca tutte le sessioni della vittima, all'infinito (§9.2) | Classificare `expires_at ≤ now()` prima di `is_used`; eliminare le righe usate/scadute; valutare revoca della sola famiglia + alert |
+| R-22 | Info | Enumerazione via registrazione (revisione **I1**, non corretta: richiede verifica email) | `201` vs `400 Registration failed` rivela se un'email esiste (3/h per IP) | Con la verifica email: risposta sempre `202` e invio di una mail |
+| R-23 | Info | Privilegi del ruolo applicativo (revisione **I4**, non corretta: decisione utente) | `nzt_app` può `UPDATE`/`DELETE` su `download_logs` e `UPDATE` su `alembic_version`: l'audit non è append-only per l'applicazione | Migrazione: `REVOKE UPDATE, DELETE ON download_logs FROM nzt_app; REVOKE ALL ON alembic_version FROM nzt_app;` |
 | R-20 | Bassa | Branding del pulsante Google monocromatico (O-P7) | Possibile non conformità alle linee guida Google | Conferma utente |
 
 Gli endpoint e i flussi non sono stati validati con Google, R2 e Railway reali (§22.5).
@@ -950,7 +975,7 @@ psql -v ON_ERROR_STOP=1 -v db_name=nzt -v migrator_password='<segreto>' -v app_p
      -f apps/api/scripts/db/roles.sql          # una sola volta, come superuser/admin
 ```
 
-Poi impostare `NZT_DATABASE_URL` (utente `nzt_app`) e `NZT_MIGRATIONS_DATABASE_URL` (utente `nzt_migrator`) e configurare TLS (`verify-full` con CA, oppure `verify-ca`).
+Poi impostare `NZT_DATABASE_URL` (utente `nzt_app`) e `NZT_MIGRATIONS_DATABASE_URL` (utente `nzt_migrator`) e configurare TLS `verify-full` con CA (`NZT_DATABASE_SSL_ROOT_CERT` se la CA non è di sistema; in produzione non sono accettati altri modi).
 
 ### 24.3 Generazione delle chiavi
 
@@ -968,14 +993,14 @@ Rotazione: nuova `ACCESS_TOKEN_PRIVATE_KEY_PEM` ⇒ tutti gli access token in ci
 
 1. Domini personalizzati `nztsolutions.it`, `clienti.nztsolutions.it`, `api.nztsolutions.it` (non i domini generati, §3.1).
 2. PostgreSQL e Redis raggiungibili **solo** dalla rete privata: disattivare eventuali proxy TCP pubblici.
-3. `NZT_TRUSTED_PROXY_CIDRS` = range da cui l'edge Railway si connette al container, verificato osservando il peer reale.
+3. `NZT_TRUSTED_PROXY_CIDRS` = range da cui l'edge Railway si connette al container, verificato osservando il peer reale (obbligatorio in produzione; solo se l'API è esposta senza proxy usare invece `NZT_DIRECT_CLIENT_CONNECTIONS=true`).
 4. Servizio statico del portale che emetta gli header di `deploy/Caddyfile` (es. container Caddy) con fallback SPA; build con `VITE_API_BASE_URL=https://api.nztsolutions.it`.
 5. Migrazioni come comando di pre-deploy con l'URL del migrator; il servizio API non deve ricevere `NZT_MIGRATIONS_DATABASE_URL`.
 6. Variabili segrete solo come variabili di servizio Railway, mai nel repository.
 
 ### 24.5 Risposta a incidenti
 
-**Che cosa fa da sola la reuse detection.** Se un refresh token già consumato viene ripresentato (furto del cookie o corsa client), l'API revoca tutte le famiglie dell'utente (`revoked_reason='reuse_detected'`), imposta `user_revoked_after:{user_id}` (gli access token emessi smettono di funzionare entro la richiesta successiva), cancella il cookie e registra il warning `SECURITY: refresh token reuse detected`. L'utente deve rifare il login su ogni dispositivo.
+**Che cosa fa da sola la reuse detection.** Se un refresh token già consumato viene ripresentato (furto del cookie o corsa client), l'API revoca tutte le famiglie dell'utente (`revoked_reason='reuse_detected'`), imposta `user_revoked_after_ms:{user_id}` (gli access token emessi smettono di funzionare entro la richiesta successiva), cancella il cookie e registra il warning `SECURITY: refresh token reuse detected`. L'utente deve rifare il login su ogni dispositivo.
 
 Individuare gli eventi recenti:
 
@@ -991,7 +1016,7 @@ UPDATE refresh_token_families SET is_revoked = TRUE, revoked_reason = 'admin_rev
 WHERE user_id = '<uuid>' AND is_revoked = FALSE;
 ```
 ```bash
-redis-cli SET user_revoked_after:<uuid> "$(date +%s)" EX 605    # TTL = TTL access token + 5 s
+redis-cli SET user_revoked_after_ms:<uuid> "$(( $(date +%s) * 1000 + 999 ))" EX 605   # ms; TTL = TTL access token + 5 s
 ```
 
 **Bloccare un utente:** `UPDATE users SET is_active = FALSE WHERE id = '<uuid>';` — effetto immediato: ogni richiesta protetta rilegge `is_active`, la rotazione fallisce, il login risponde con l'errore generico, Google risponde `403 Account is disabled`. Riattivando l'utente le famiglie revocate restano revocate.
@@ -1002,21 +1027,21 @@ redis-cli SET user_revoked_after:<uuid> "$(date +%s)" EX 605    # TTL = TTL acce
 
 - [ ] `NZT_ENVIRONMENT=production` (le guardie di avvio diventano attive, `/docs` e `/openapi.json` spariscono).
 - [ ] Chiavi reali per firma token e state OAuth; credenziali Google con redirect URI `https://clienti.nztsolutions.it/auth/google/callback` registrato.
-- [ ] `NZT_DATABASE_URL`, `NZT_MIGRATIONS_DATABASE_URL`, `NZT_REDIS_URL` impostate (non controllate dalle guardie); `roles.sql` eseguito; TLS DB verificato.
-- [ ] `NZT_TRUSTED_PROXY_CIDRS` impostato e verificato (un login da IP noto deve comparire con quell'IP in `download_logs` dopo un download di prova).
+- [ ] `NZT_DATABASE_URL`, `NZT_REDIS_URL` impostate (ora imposte dalle guardie); `NZT_MIGRATIONS_DATABASE_URL` solo nel passo di migrazione, non sul servizio API; `roles.sql` eseguito; TLS DB `verify-full` verificato.
+- [ ] `NZT_TRUSTED_PROXY_CIDRS` impostato (imposto dalle guardie, salvo opt-in `NZT_DIRECT_CLIENT_CONNECTIONS=true`) e verificato (un login da IP noto deve comparire con quell'IP in `download_logs` dopo un download di prova).
 - [ ] `NZT_STORAGE_ENDPOINT_URL` sull'host S3 di R2; credenziali di sola lettura limitate al bucket; bucket non pubblico; `NZT_LAUNCHER_VERSION` e `NZT_LAUNCHER_SHA256` reali; download di prova completato e hash verificato.
 - [ ] `VITE_API_BASE_URL` = `NZT_API_PUBLIC_BASE_URL`; header del portale presenti come header HTTP (CSP, `X-Robots-Tag`, `frame-ancestors`).
 - [ ] Postgres e Redis non raggiungibili da Internet.
 - [ ] Uvicorn avviato con `--no-proxy-headers`.
-- [ ] Test backend (110) e portale (108) verdi sul commit da rilasciare; `pnpm audit --prod` e `pip-audit` senza vulnerabilità aperte.
+- [ ] Test backend (153) e portale (110) verdi sul commit da rilasciare; `pnpm audit --prod` e `pip-audit` senza vulnerabilità aperte.
 - [ ] Prova manuale end-to-end in produzione: registrazione, login, reload, Google, download, logout.
-- [ ] Decisione presa su O-P1 (finestra di grazia) e su verifica email (R-2).
+- [ ] Decisione presa su O-P1 (finestra di grazia), verifica email (R-2/M2), replay di token storici (R-21/L1), cookie tossing (R-18/L5), privilegi su `download_logs` (R-23/I4).
 
 ---
 
 ## Appendice A — Endpoint dell'API
 
-Tutte le risposte d'errore hanno body `{"detail": …}`. Valgono per ogni endpoint: `413` (body > 16 KiB), `500` generico, `503 Service temporarily unavailable` se Redis non risponde sugli endpoint che lo usano. Le risposte con `401` DPoP portano `WWW-Authenticate` (§7.4).
+Tutte le risposte d'errore hanno body `{"detail": …}` e, per gli origin del portale, gli header CORS (incluso `Access-Control-Expose-Headers: Retry-After`). Valgono per ogni endpoint: `413` (body > 16 KiB), `500` generico, `503 Service temporarily unavailable` + `Retry-After: 5` se Redis non risponde sugli endpoint che lo usano; register/login: `503 Service busy, please retry shortly` + `Retry-After: 1` se la coda Argon2 è piena. Le risposte con `401` DPoP portano `WWW-Authenticate` (§7.4).
 
 | Metodo e path | Autenticazione | Rate limit | Successo | Errori |
 | :--- | :--- | :--- | :--- | :--- |
@@ -1024,8 +1049,8 @@ Tutte le risposte d'errore hanno body `{"detail": …}`. Valgono per ogni endpoi
 | `POST /api/v1/auth/login` body `{email,password}` | Prova DPoP | 5/min per IP + 5/min per email | `200` token + cookie refresh | `401 Invalid email or password`; `401 Invalid DPoP proof`; `422`; `429` |
 | `POST /api/v1/auth/refresh` (cookie) | Prova DPoP con chiave della famiglia | 30/min per famiglia (`anon:<ip>` se sconosciuta) | `200` token + cookie ruotato | `401 Missing refresh token`; `401 Invalid refresh token` (+ cookie cancellato); `401 Refresh token reuse detected` (+ revoca totale, cookie cancellato); `401 DPoP key does not match refresh token binding`; `401 Invalid DPoP proof`; `429` |
 | `POST /api/v1/auth/logout` (cookie) | Prova DPoP con chiave della famiglia | nessuno | `204` + cookie cancellato (anche per token sconosciuto) | `401 Missing refresh token`; `401 Invalid DPoP proof` (prova non valida o chiave diversa) |
-| `GET /api/v1/auth/google/authorize` | Nessuna (CORS: solo portale) | nessuno | `200 {authorization_url}` + cookie `__Secure-oauth-state` | `503 Google sign-in not configured` |
-| `POST /api/v1/auth/google/callback` body `{code,state}` (cookie state) | Prova DPoP | nessuno | `200` token + cookie refresh, cookie state cancellato | `400 Invalid OAuth state` / `OAuth state expired` / `Authorization code exchange failed` / errori ID token / `Google account email is not verified`; `401 Invalid DPoP proof`; `403 Account is disabled` / account locale non verificato; `409` altro `sub` o conflitto; `502` IdP non raggiungibile; `503` non configurato |
+| `GET /api/v1/auth/google/authorize` | Nessuna (CORS: solo portale) | 20/min per IP | `200 {authorization_url}` + cookie `__Secure-oauth-state` | `429`; `503 Google sign-in not configured` |
+| `POST /api/v1/auth/google/callback` body `{code,state}` (cookie state) | Prova DPoP | 10/min per IP | `200` token + cookie refresh, cookie state cancellato | `400 Invalid OAuth state` / `OAuth state expired` / `OAuth state already used` / `Authorization code exchange failed` / errori ID token / `Google account email is not verified`; `401 Invalid DPoP proof`; `403 Account is disabled` / account locale non verificato; `409` altro `sub` o conflitto; `502` IdP non raggiungibile; `503` non configurato |
 | `GET /api/v1/downloads/launcher` | `Authorization: DPoP <AT>` + prova con `ath` | 10/h per utente | `200 {download_url, sha256, version, expires_in:300}` | `401 Not authenticated` / `Invalid access token` / `Invalid DPoP proof`; `403 User does not have active entitlement for launcher_core`; `429` |
 | `GET /healthz` | Nessuna | nessuno | `200 {"status":"ok"}` | `503 {"detail":"unavailable"}` |
 | `GET /docs`, `GET /openapi.json` | Nessuna | nessuno | Solo fuori produzione | `404` in produzione |
@@ -1037,7 +1062,7 @@ Tutte le risposte d'errore hanno body `{"detail": …}`. Valgono per ogni endpoi
 | `apps/api/src/app/config.py` | Configurazione, segreti `SecretStr`, guardie di produzione |
 | `apps/api/src/app/security/dpop.py` | Validazione prove DPoP, anti-replay |
 | `apps/api/src/app/security/tokens.py` | Access token EdDSA, generazione e hash dei refresh token |
-| `apps/api/src/app/security/passwords.py` | Argon2id, semaforo, dummy verify, politica password |
+| `apps/api/src/app/security/passwords.py` | Argon2id, semaforo, coda limitata (`503`), dummy verify, politica password |
 | `apps/api/src/app/security/sealed.py` | AES-256-GCM del cookie di state OAuth |
 | `apps/api/src/app/security/jose_utils.py` | base64url stretto, thumbprint RFC 7638 |
 | `apps/api/src/app/services/sessions.py` | Famiglie, RTR atomica, reuse detection, logout, marker |
@@ -1048,7 +1073,7 @@ Tutte le risposte d'errore hanno body `{"detail": …}`. Valgono per ogni endpoi
 | `apps/api/src/app/cookies.py` | Rendering esatto dei cookie |
 | `apps/api/src/app/client_ip.py` | IP client e proxy fidati |
 | `apps/api/src/app/ratelimit.py` | Sliding window Redis, fail-closed |
-| `apps/api/src/app/middleware.py` | Header di sicurezza, guardia errori, limite body |
+| `apps/api/src/app/middleware.py` | Header di sicurezza, guardia errori (dentro e fuori CORS), limite body |
 | `apps/api/src/app/errors.py` | Handler 422/429/503, `WWW-Authenticate` |
 | `apps/api/src/app/main.py` | Factory, CORS, ordine dei middleware |
 | `apps/api/scripts/db/roles.sql` | Ruoli a privilegio minimo |

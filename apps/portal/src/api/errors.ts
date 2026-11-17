@@ -47,6 +47,10 @@ export function describeError(error: unknown, context: ErrorContext): string {
   }
   const { status, detail } = error;
   if (status === 429) return rateLimited(error, context);
+  if (status === 503 && error.retryAfterSeconds !== null && error.retryAfterSeconds > 0) {
+    // Sovraccarico temporaneo (es. coda di verifica password piena): il server indica l'attesa.
+    return `Servizio momentaneamente sovraccarico. Riprova tra ${formatWait(error.retryAfterSeconds)}.`;
+  }
   if (status >= 500) return 'Servizio temporaneamente non disponibile. Riprova più tardi.';
   if (status === 401 && detail === DETAIL.invalidDpop) {
     return 'Verifica di sicurezza della richiesta non riuscita. Controlla che data e ora del dispositivo siano corrette, poi riprova.';

@@ -21,6 +21,7 @@ import jwt
 from jwt import PyJWK
 
 from app.config import Settings
+from app.schemas import InvalidEmailError, canonical_email
 from app.security.jose_utils import b64url_encode
 
 logger = logging.getLogger(__name__)
@@ -123,11 +124,16 @@ class GoogleOIDCClient:
         if claims.get("email_verified") is not True:
             raise OIDCError("Google account email is not verified")
         email, sub = claims.get("email"), claims.get("sub")
-        if not isinstance(email, str) or not email or len(email) > 255:
+        if not isinstance(email, str) or not email:
             raise OIDCError("id_token has no usable email")
         if not isinstance(sub, str) or not sub or len(sub) > 255:
             raise OIDCError("id_token has no usable sub")
-        return GoogleIdentity(sub=sub, email=email.strip().lower())
+        try:
+            # Same canonical form as local accounts (review I5): lookup/linking keys match.
+            canonical = canonical_email(email)
+        except InvalidEmailError as exc:
+            raise OIDCError("id_token has no usable email") from exc
+        return GoogleIdentity(sub=sub, email=canonical)
 
     async def _verify_id_token(self, id_token: str) -> dict[str, Any]:
         try:

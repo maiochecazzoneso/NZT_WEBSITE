@@ -17,6 +17,7 @@ from app.errors import www_authenticate_dpop
 from app.models import AuthIdentity, User
 from app.ratelimit import LOGIN_PER_EMAIL, LOGIN_PER_IP, REFRESH_PER_FAMILY, REGISTER_PER_IP
 from app.schemas import ErrorResponse, LoginRequest, RegisterRequest, TokenResponse
+from app.security.passwords import PasswordHasherBusyError
 from app.services.sessions import IssuedSession, RefreshError, RefreshOutcome
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,8 @@ _DPOP_401: dict[int | str, dict[str, Any]] = {
     401: {"model": ErrorResponse, "description": "Invalid/missing DPoP proof"}
 }
 _429: dict[int | str, dict[str, Any]] = {
-    429: {"model": ErrorResponse, "description": "Rate limited (Retry-After)"}
+    429: {"model": ErrorResponse, "description": "Rate limited (Retry-After)"},
+    503: {"model": ErrorResponse, "description": "Busy / dependency down (Retry-After)"},
 }
 
 
@@ -142,8 +144,12 @@ async def login(
     if not await services.passwords.verify(row.password_hash, payload.password):
         return error_response(401, INVALID_CREDENTIALS)
     if services.passwords.hasher.check_needs_rehash(row.password_hash):
-        new_hash = await services.passwords.hash(payload.password)
-        await db.execute(update(User).where(User.id == row.id).values(password_hash=new_hash))
+        try:
+            new_hash = await services.passwords.hash(payload.password)
+        except PasswordHasherBusyError:
+            new_hash = None  # best effort: rehash again on a later login
+        if new_hash is not None:
+            await db.execute(update(User).where(User.id == row.id).values(password_hash=new_hash))
     issued = await services.sessions.create_session(db, user_id=row.id, jkt=proof.jkt)
     await db.commit()
     return token_response(

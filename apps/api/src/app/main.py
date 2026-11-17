@@ -16,7 +16,11 @@ from app.config import Settings, get_settings
 from app.db import create_engine, create_sessionmaker
 from app.deps import Services
 from app.errors import install_error_handlers
-from app.middleware import BodySizeLimitMiddleware, SecurityHeadersMiddleware
+from app.middleware import (
+    BodySizeLimitMiddleware,
+    SecurityHeadersMiddleware,
+    ServerErrorGuardMiddleware,
+)
 from app.ratelimit import RateLimiter
 from app.routers import auth, downloads, google, health
 from app.security.dpop import DPoPValidator
@@ -57,7 +61,9 @@ def build_services(
         sessionmaker=create_sessionmaker(engine),
         redis=redis,
         http=http,
-        passwords=PasswordService(settings.argon2_max_concurrency),
+        passwords=PasswordService(
+            settings.argon2_max_concurrency, max_queue=settings.argon2_max_queue
+        ),
         tokens=tokens,
         dpop=DPoPValidator(
             redis=redis,
@@ -111,17 +117,22 @@ def create_app(
     app.include_router(google.router)
     app.include_router(downloads.router)
 
-    # Order: last added = outermost. Security headers wrap everything (incl. CORS
-    # preflights and 413/500 responses).
+    # Order: last added = outermost. Outer -> inner:
+    #   SecurityHeaders -> CORS -> ServerErrorGuard -> BodySizeLimit -> app
+    # Security headers wrap everything (incl. CORS preflights and 413/500 responses), and
+    # CORS now wraps the 413 (body limit) and the generic 500 too, so an allowed portal
+    # origin can read every error status. Retry-After is exposed so the portal can show
+    # the real wait time on 429/503 (review I6).
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
+    app.add_middleware(ServerErrorGuardMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.portal_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST"],
         allow_headers=["Authorization", "Content-Type", "DPoP"],
-        expose_headers=[],
+        expose_headers=["Retry-After"],
         max_age=600,
     )
-    app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
     app.add_middleware(SecurityHeadersMiddleware, settings=settings)
     return app

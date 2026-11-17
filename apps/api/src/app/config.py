@@ -87,9 +87,14 @@ class Settings(BaseSettings):
 
     # --- Passwords (D-A9) ---------------------------------------------------------------
     argon2_max_concurrency: int = Field(default=2, ge=1, le=32)
+    # Max calls WAITING for an Argon2 slot; beyond it -> 503 + Retry-After (review L4).
+    argon2_max_queue: int = Field(default=8, ge=0, le=1024)
 
     # --- Client IP / proxies (D-A10) ----------------------------------------------------
     trusted_proxy_cidrs: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # Explicit opt-in for "no reverse proxy in front of the API": the socket peer is the
+    # client. In production exactly one of trusted_proxy_cidrs / this flag must be set.
+    direct_client_connections: bool = False
 
     # --- HTTP hardening ---------------------------------------------------------------
     max_request_body_bytes: int = Field(default=16_384, ge=1024, le=1_048_576)
@@ -191,11 +196,38 @@ class Settings(BaseSettings):
             raise ValueError(f"production requires: {', '.join(missing)}")
         if self.launcher_sha256 == "0" * 64:
             raise ValueError("production requires NZT_LAUNCHER_SHA256")
-        if self.effective_db_sslmode not in ("verify-full", "verify-ca"):
-            raise ValueError("production requires NZT_DATABASE_SSLMODE verify-full/verify-ca")
+        # Infrastructure endpoints must be configured explicitly: the built-in defaults
+        # point at the local test services and must never be used in production.
+        # NZT_MIGRATIONS_DATABASE_URL is deliberately NOT required (nor wanted) here: DDL
+        # migrations run in a separate pipeline step and the API service must not hold the
+        # migrator credentials; alembic/env.py requires it when migrations run.
+        implicit = [
+            env
+            for name, env in (
+                ("database_url", "NZT_DATABASE_URL"),
+                ("redis_url", "NZT_REDIS_URL"),
+            )
+            if name not in self.model_fields_set or _is_blank(getattr(self, name))
+        ]
+        if implicit:
+            raise ValueError(f"production requires explicit {', '.join(implicit)}")
+        if self.effective_db_sslmode != "verify-full":
+            raise ValueError("production requires NZT_DATABASE_SSLMODE=verify-full")
+        if self.trusted_proxy_cidrs and self.direct_client_connections:
+            raise ValueError(
+                "production: set NZT_TRUSTED_PROXY_CIDRS or NZT_DIRECT_CLIENT_CONNECTIONS, not both"
+            )
+        if not self.trusted_proxy_cidrs and not self.direct_client_connections:
+            raise ValueError(
+                "production requires NZT_TRUSTED_PROXY_CIDRS (or the explicit opt-in "
+                "NZT_DIRECT_CLIENT_CONNECTIONS=true when no reverse proxy is in front)"
+            )
         urls = [self.api_public_base_url, self.storage_public_origin, *self.portal_origins]
         if any(not u.startswith("https://") for u in urls):
             raise ValueError("production public URLs must be https")
+        storage = urlsplit(self.storage_endpoint_url)
+        if storage.scheme != "https" or not storage.hostname:
+            raise ValueError("production requires an https NZT_STORAGE_ENDPOINT_URL")
         return self
 
     # --- derived ------------------------------------------------------------------------

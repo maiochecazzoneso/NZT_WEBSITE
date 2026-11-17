@@ -41,7 +41,8 @@ async def test_register_happy_path(client: httpx.AsyncClient, migrator_conn: asy
     assert header["typ"] == "at+jwt"
     assert header["kid"]
     claims = _decode(body["access_token"])
-    assert set(claims) == {"sub", "iss", "exp", "jti", "cnf", "iat"}
+    # iat_ms: revocation-ordering instant (review L3), see services/sessions.py.
+    assert set(claims) == {"sub", "iss", "exp", "jti", "cnf", "iat", "iat_ms"}
     assert claims["iss"] == API_BASE
     assert claims["cnf"] == {"jkt": key.thumbprint}
     assert int(claims["exp"]) - int(claims["iat"]) == 600  # type: ignore[call-overload]

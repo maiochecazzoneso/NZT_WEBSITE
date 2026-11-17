@@ -8,10 +8,10 @@ Monorepo pnpm (workspaces) del progetto NZT Solutions.
 .
 ├── apps/
 │   ├── landing/   Sito pubblico (Astro 5, React, Tailwind 4)
-│   ├── portal/    Area Clienti (frontend) - in arrivo
-│   └── api/       Backend FastAPI (Python) - in arrivo
+│   ├── portal/    Area Clienti (frontend: React 19, Vite 6, Tailwind 4, DPoP)
+│   └── api/       Backend Area Clienti (FastAPI, Python 3.12, PostgreSQL 16, Redis)
 ├── packages/
-│   └── ui/        Design system condiviso - in arrivo
+│   └── ui/        Design system condiviso @nzt/ui (usato da landing e portale)
 ├── docs/          Specifiche e documentazione di progetto
 ├── package.json
 └── pnpm-workspace.yaml   (apps/*, packages/*)
@@ -51,11 +51,29 @@ Ogni app contiene la propria configurazione ESLint/Prettier/TypeScript.
 
 ## Portal (`apps/portal`)
 
-In arrivo.
+Area Clienti (`clienti.nztsolutions.it`). Dalla radice:
+
+```bash
+pnpm dev:portal        # server di sviluppo Vite
+pnpm build:portal      # typecheck + vite build (output in apps/portal/dist)
+pnpm preview:portal    # anteprima con gli header di produzione (CSP)
+pnpm --filter @nzt/portal test   # Vitest
+```
+
+Variabili di build: `VITE_API_BASE_URL`, `VITE_OAUTH_AUTHORIZE_ORIGINS`.
 
 ## API (`apps/api`)
 
-In arrivo.
+Backend FastAPI dell'Area Clienti (`api.nztsolutions.it`). Da `apps/api`:
+
+```bash
+uv sync --frozen
+scripts/test-services.sh start      # PostgreSQL 16 + Redis di test (oppure docker-compose.test.yml)
+uv run pytest -q                    # suite contro PostgreSQL e Redis reali
+uv run ruff check . && uv run ruff format --check . && uv run mypy
+```
+
+Configurazione: variabili `NZT_*` (modello in `apps/api/.env.example`). Architettura e runbook di sicurezza: `docs/architettura_sicurezza_area_clienti.md`.
 
 ## Documentazione
 

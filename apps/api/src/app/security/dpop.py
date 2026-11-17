@@ -7,6 +7,9 @@ Strict profile:
   request path (scheme/host/port/path compared, query/fragment ignored),
   |now - iat| <= leeway, ath == b64url(SHA-256(access token)) when an access token is
   presented (resource requests only).
+* Claim types are checked strictly BEFORE any arithmetic (review L2): iat must be a JSON
+  number that is not a boolean, finite (no NaN/Infinity, which Python's json accepts) and
+  within a sane NumericDate range; anything else is an invalid proof (401), never a 500.
 * jti replay protection: Redis SET NX with TTL >= 2*leeway (fail-closed).
 """
 
@@ -14,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -30,6 +34,10 @@ DPOP_ALG = "ES256"
 _PRIVATE_JWK_MEMBERS = frozenset({"d", "p", "q", "dp", "dq", "qi", "oth", "k"})
 _MAX_PROOF_LEN = 4096
 _MAX_JTI_LEN = 256
+_P256_COORD_B64_LEN = 43
+# NumericDate sanity range for iat: [1970, 2^31) seconds. Rejects absurd values (incl.
+# huge integers whose float() conversion would raise OverflowError) before any math.
+_MAX_NUMERIC_DATE = 2**31
 
 
 class DPoPError(Exception):
@@ -48,8 +56,22 @@ class DPoPProof:
     jwk: dict[str, str]
 
 
+def _numeric_date(value: object) -> float:
+    """Strict NumericDate: int/float, never bool, finite, within the sane range."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise DPoPError("invalid iat")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise DPoPError("invalid iat")
+    if not 0 <= value < _MAX_NUMERIC_DATE:
+        raise DPoPError("invalid iat")
+    return float(value)
+
+
 def _normalize_url(url: str) -> tuple[str, str, int, str]:
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError as exc:  # e.g. unbalanced IPv6 brackets
+        raise DPoPError("htu is not an absolute http(s) URI") from exc
     scheme = parts.scheme.lower()
     if scheme not in {"http", "https"} or not parts.hostname:
         raise DPoPError("htu is not an absolute http(s) URI")
@@ -70,6 +92,9 @@ def _public_key_from_jwk(jwk: object) -> tuple[ec.EllipticCurvePublicKey, dict[s
     x, y = jwk.get("x"), jwk.get("y")
     if not isinstance(x, str) or not isinstance(y, str):
         raise DPoPError("jwk x/y missing")
+    # P-256 coordinates are exactly 32 bytes = exactly 43 canonical base64url chars.
+    if len(x) != _P256_COORD_B64_LEN or len(y) != _P256_COORD_B64_LEN:
+        raise DPoPError("jwk x/y must be 32 bytes")
     try:
         xb, yb = b64url_decode(x), b64url_decode(y)
     except ValueError as exc:
@@ -144,10 +169,9 @@ class DPoPValidator:
             self.expected_htu(path)
         ):
             raise DPoPError("htu mismatch")
-        if isinstance(iat, bool) or not isinstance(iat, int | float):
-            raise DPoPError("invalid iat")
+        iat_value = _numeric_date(iat)
         current = time.time() if now is None else now
-        if abs(current - float(iat)) > self._leeway:
+        if not abs(current - iat_value) <= self._leeway:  # NaN-safe formulation
             raise DPoPError("proof iat outside acceptable window")
 
         if access_token is not None:
@@ -163,4 +187,4 @@ class DPoPValidator:
         stored = await self._redis.set(replay_key, "1", nx=True, ex=self._leeway * 2 + 5)
         if not stored:
             raise DPoPError("DPoP proof replayed")
-        return DPoPProof(jkt=jkt, jti=jti, iat=int(iat), jwk=public_jwk)
+        return DPoPProof(jkt=jkt, jti=jti, iat=int(iat_value), jwk=public_jwk)

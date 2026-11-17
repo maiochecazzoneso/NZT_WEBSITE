@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from redis.exceptions import RedisError
 
 from app.ratelimit import RateLimitExceededError, RateLimitUnavailableError
+from app.security.passwords import PasswordHasherBusyError
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +57,19 @@ async def _unavailable_handler(request: Request, exc: Exception) -> JSONResponse
     )
 
 
+async def _hasher_busy_handler(request: Request, exc: Exception) -> JSONResponse:
+    assert isinstance(exc, PasswordHasherBusyError)
+    logger.warning("password hashing queue full: shedding load")
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Service busy, please retry shortly"},
+        headers={"Retry-After": str(exc.retry_after)},
+    )
+
+
 def install_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RequestValidationError, _validation_handler)
     app.add_exception_handler(RateLimitExceededError, _rate_limited_handler)
     app.add_exception_handler(RateLimitUnavailableError, _unavailable_handler)
     app.add_exception_handler(RedisError, _unavailable_handler)
+    app.add_exception_handler(PasswordHasherBusyError, _hasher_busy_handler)

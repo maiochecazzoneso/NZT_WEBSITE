@@ -11,13 +11,31 @@ Postgres row locking guarantees that of N concurrent requests presenting the sam
 exactly one UPDATE matches; the others re-check the row after the winner commits, see
 is_used = TRUE and are classified as REUSE (=> every family of the user is revoked and
 already issued access tokens are killed through the Redis marker). The frontend must
-serialise refreshes with Web Locks (spec §6.4)."""
+serialise refreshes with Web Locks (spec §6.4).
+
+Access-token revocation markers (review L3). Revoking families does not touch access
+tokens already issued, so revocation also writes a Redis marker "every access token of
+this user / DPoP key issued at or before instant M is dead". The ordering uses ONE clock
+with millisecond resolution, the Redis server clock (TIME), for both sides:
+* the marker M is read from TIME inside a Lua script AFTER the revoking UPDATE (logout:
+  after its commit; reuse: while the UPDATE's row locks are held, committed right after),
+  and the stored value only ever moves forward (max(old, new));
+* every access token carries ``iat_ms`` = Redis TIME captured BEFORE the DB work that
+  issues it (refresh-token consume / family creation).
+A token is rejected iff ``iat_ms <= M``. Therefore any token whose consume ran before the
+revoking UPDATE is rejected (its instant precedes M), a consume that runs after it cannot
+succeed (the family is revoked; a concurrent one waits on the row lock and then fails),
+a token minted after the revocation (e.g. the legitimate re-login in the same wall-clock
+second, previously rejected because both sides were truncated to whole seconds) is
+accepted, and the only ambiguous case, the same millisecond, fails CLOSED. Using the
+Redis clock removes skew between API replicas. Legacy second-resolution markers
+(written by a not-yet-upgraded replica during a rolling deploy) are still honoured with
+the old semantics; they expire after access_ttl + 5 s."""
 
 from __future__ import annotations
 
 import enum
 import re
-import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -31,8 +49,21 @@ from app.security.tokens import AccessTokenService, hash_refresh_token, new_refr
 
 _REFRESH_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
-USER_REVOKED_AFTER = "user_revoked_after:{}"
-JKT_REVOKED_AFTER = "jkt_revoked_after:{}"
+USER_REVOKED_AFTER_MS = "user_revoked_after_ms:{}"
+JKT_REVOKED_AFTER_MS = "jkt_revoked_after_ms:{}"
+# Legacy (second-resolution) markers: read-only, for rolling deploys (see docstring).
+LEGACY_USER_REVOKED_AFTER = "user_revoked_after:{}"
+LEGACY_JKT_REVOKED_AFTER = "jkt_revoked_after:{}"
+
+# KEYS[1] = marker key, ARGV[1] = TTL seconds. Marker := max(current, Redis TIME in ms).
+_MARK_REVOKED_LUA = """
+local t = redis.call('TIME')
+local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+local cur = tonumber(redis.call('GET', KEYS[1]) or '0') or 0
+if now > cur then cur = now end
+redis.call('SET', KEYS[1], string.format('%d', cur), 'EX', tonumber(ARGV[1]))
+return cur
+"""
 
 
 class RefreshOutcome(enum.Enum):
@@ -68,6 +99,7 @@ class SessionService:
         self._tokens = tokens
         self._redis = redis
         self._refresh_ttl = refresh_ttl_seconds
+        self._mark_script = redis.register_script(_MARK_REVOKED_LUA)
 
     @property
     def access_ttl(self) -> int:
@@ -76,10 +108,19 @@ class SessionService:
     def _expiry(self) -> datetime:
         return datetime.now(UTC) + timedelta(seconds=self._refresh_ttl)
 
+    async def clock_ms(self) -> int:
+        """Shared Redis clock in ms (the ordering clock of the revocation markers)."""
+        seconds, micros = await self._redis.time()
+        return int(seconds) * 1000 + int(micros) // 1000
+
+    async def _mark_revoked(self, key: str) -> None:
+        await self._mark_script(keys=[key], args=[self.access_ttl + 5])
+
     async def create_session(
         self, db: AsyncSession, *, user_id: uuid.UUID, jkt: str
     ) -> IssuedSession:
         """New family bound to the DPoP key + first refresh token. Caller commits."""
+        issued_ms = await self.clock_ms()  # BEFORE the DB work (see module docstring)
         family = RefreshTokenFamily(id=uuid.uuid4(), user_id=user_id, dpop_jkt=jkt)
         db.add(family)
         await db.flush()
@@ -94,7 +135,7 @@ class SessionService:
         )
         await db.flush()
         return IssuedSession(
-            access_token=self._tokens.issue(user_id=user_id, jkt=jkt),
+            access_token=self._tokens.issue(user_id=user_id, jkt=jkt, issued_ms=issued_ms),
             refresh_token=raw,
             expires_in=self._tokens.ttl,
             family_id=family.id,
@@ -115,6 +156,7 @@ class SessionService:
             raise RefreshError(RefreshOutcome.INVALID)
         assert raw is not None
         token_hash = hash_refresh_token(raw)
+        issued_ms = await self.clock_ms()  # BEFORE the consume (see module docstring)
 
         consumed = await db.execute(
             update(RefreshToken)
@@ -152,7 +194,7 @@ class SessionService:
             )
             await db.commit()
             return IssuedSession(
-                access_token=self._tokens.issue(user_id=user_id, jkt=jkt),
+                access_token=self._tokens.issue(user_id=user_id, jkt=jkt, issued_ms=issued_ms),
                 refresh_token=new_raw,
                 expires_in=self._tokens.ttl,
                 family_id=family_id,
@@ -199,9 +241,7 @@ class SessionService:
             .values(is_revoked=True, revoked_reason=reason)
             .execution_options(synchronize_session=False)
         )
-        await self._redis.set(
-            USER_REVOKED_AFTER.format(user_id), str(int(time.time())), ex=self.access_ttl + 5
-        )
+        await self._mark_revoked(USER_REVOKED_AFTER_MS.format(user_id))
 
     async def logout(self, db: AsyncSession, *, raw: str, jkt: str) -> bool:
         """Revoke the family of ``raw``. Returns False when the DPoP key does not match.
@@ -227,16 +267,22 @@ class SessionService:
         )
         await db.commit()
         # Kill access tokens bound to this key that were issued up to now.
-        await self._redis.set(
-            JKT_REVOKED_AFTER.format(jkt), str(int(time.time())), ex=self.access_ttl + 5
-        )
+        await self._mark_revoked(JKT_REVOKED_AFTER_MS.format(jkt))
         return True
 
-    async def is_access_token_revoked(self, *, user_id: uuid.UUID, jkt: str, iat: int) -> bool:
-        user_marker, jkt_marker = await self._redis.mget(
-            USER_REVOKED_AFTER.format(user_id), JKT_REVOKED_AFTER.format(jkt)
+    async def is_access_token_revoked(
+        self, *, user_id: uuid.UUID, jkt: str, iat: int, iat_ms: int
+    ) -> bool:
+        user_ms, jkt_ms, legacy_user, legacy_jkt = await self._redis.mget(
+            USER_REVOKED_AFTER_MS.format(user_id),
+            JKT_REVOKED_AFTER_MS.format(jkt),
+            LEGACY_USER_REVOKED_AFTER.format(user_id),
+            LEGACY_JKT_REVOKED_AFTER.format(jkt),
         )
-        for marker in (user_marker, jkt_marker):
+        for marker in (user_ms, jkt_ms):
+            if marker is not None and iat_ms <= int(marker):
+                return True
+        for marker in (legacy_user, legacy_jkt):
             if marker is not None and iat <= int(marker):
                 return True
         return False

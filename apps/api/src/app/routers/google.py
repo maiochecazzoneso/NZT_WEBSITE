@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import logging
 import time
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Cookie
+from fastapi import APIRouter, Body, Cookie, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -17,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.cookies import OAUTH_STATE_COOKIE, clear_oauth_state_cookie, set_oauth_state_cookie
 from app.deps import DbSession, DPoPProofDep, ServicesDep
 from app.models import AuthIdentity, User
+from app.ratelimit import GOOGLE_AUTHORIZE_PER_IP, GOOGLE_CALLBACK_PER_IP
 from app.routers.auth import token_response
 from app.schemas import ErrorResponse, GoogleAuthorizeResponse, GoogleCallbackRequest, TokenResponse
 from app.security.sealed import SealError
@@ -31,6 +33,22 @@ UNVERIFIED_LOCAL_ACCOUNT = (
     "Verify the local account before signing in with Google."
 )
 OAuthStateCookie = Annotated[str | None, Cookie(alias=OAUTH_STATE_COOKIE)]
+STATE_ALREADY_USED = "OAuth state already used"
+# Consumed-state markers outlive the sealed state's own validity (+ clock margin).
+_STATE_USED_TTL_SECONDS = OAUTH_STATE_TTL_SECONDS + 60
+_429: dict[int | str, dict[str, Any]] = {
+    429: {"model": ErrorResponse, "description": "Rate limited (Retry-After)"}
+}
+
+
+async def _rl_authorize(request: Request, services: ServicesDep) -> None:
+    await services.rate_limiter.hit(
+        GOOGLE_AUTHORIZE_PER_IP, services.client_ip.for_request(request)
+    )
+
+
+async def _rl_callback(request: Request, services: ServicesDep) -> None:
+    await services.rate_limiter.hit(GOOGLE_CALLBACK_PER_IP, services.client_ip.for_request(request))
 
 
 def _fail(status_code: int, detail: str) -> JSONResponse:
@@ -42,7 +60,8 @@ def _fail(status_code: int, detail: str) -> JSONResponse:
 @router.get(
     "/authorize",
     response_model=GoogleAuthorizeResponse,
-    responses={503: {"model": ErrorResponse}},
+    responses={503: {"model": ErrorResponse}, **_429},
+    dependencies=[Depends(_rl_authorize)],
 )
 async def authorize(services: ServicesDep) -> JSONResponse:
     if not services.google.configured:
@@ -122,7 +141,9 @@ async def _resolve_user(db: AsyncSession, identity: GoogleIdentity) -> uuid.UUID
         403: {"model": ErrorResponse, "description": "Unverified local account / disabled"},
         409: {"model": ErrorResponse},
         502: {"model": ErrorResponse},
+        **_429,
     },
+    dependencies=[Depends(_rl_callback)],
 )
 async def callback(
     services: ServicesDep,
@@ -149,13 +170,24 @@ async def callback(
         isinstance(state, str)
         and isinstance(verifier, str)
         and isinstance(nonce, str)
-        and isinstance(exp, int)
+        and type(exp) is int
     ):
         return _fail(400, "Invalid OAuth state")
     if exp < int(time.time()):
         return _fail(400, "OAuth state expired")
     if not hmac.compare_digest(state.encode(), payload.state.encode()):
         return _fail(400, "Invalid OAuth state")
+    # Single use (review L6): the first valid callback consumes the state server-side, so a
+    # replayed cookie+state never reaches Google's token endpoint again. Redis errors =>
+    # 503 (fail-closed, via the RedisError handler).
+    consumed = await services.redis.set(
+        "oauth_state_used:" + hashlib.sha256(state.encode()).hexdigest(),
+        "1",
+        nx=True,
+        ex=_STATE_USED_TTL_SECONDS,
+    )
+    if not consumed:
+        return _fail(400, STATE_ALREADY_USED)
 
     try:
         identity = await services.google.exchange_code(

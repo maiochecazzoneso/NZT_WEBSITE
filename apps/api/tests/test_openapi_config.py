@@ -116,6 +116,7 @@ def test_production_defaults_verify_full_and_rejects_disable():
         "access_token_private_key_pem": "x",
         "oauth_state_key": key,
         "launcher_sha256": "ab" * 32,
+        "trusted_proxy_cidrs": ["10.0.0.0/8"],
     }
     ok = make_settings(**common, database_sslmode=None)
     assert ok.effective_db_sslmode == "verify-full"

@@ -56,6 +56,16 @@ def _merge(
     return [(k, v) for k, v in existing if k.lower() not in names] + extra
 
 
+async def _send_internal_error(send: Send, extra: list[tuple[bytes, bytes]]) -> None:
+    body = json.dumps({"detail": "Internal server error"}).encode()
+    headers = [
+        (b"content-type", b"application/json"),
+        (b"content-length", str(len(body)).encode()),
+    ]
+    await send({"type": "http.response.start", "status": 500, "headers": _merge(headers, extra)})
+    await send({"type": "http.response.body", "body": body})
+
+
 class SecurityHeadersMiddleware:
     def __init__(self, app: ASGIApp, settings: Settings) -> None:
         self.app = app
@@ -79,23 +89,37 @@ class SecurityHeadersMiddleware:
         except Exception:
             # Never leak stack traces; log type + path only.
             logger.exception("unhandled error on %s %s", scope.get("method"), scope.get("path"))
-            if started:
-                return
-            body = json.dumps({"detail": "Internal server error"}).encode()
-            await send(
-                {
-                    "type": "http.response.start",
-                    "status": 500,
-                    "headers": _merge(
-                        [
-                            (b"content-type", b"application/json"),
-                            (b"content-length", str(len(body)).encode()),
-                        ],
-                        self.headers,
-                    ),
-                }
-            )
-            await send({"type": "http.response.body", "body": body})
+            if not started:
+                await _send_internal_error(send, self.headers)
+
+
+class ServerErrorGuardMiddleware:
+    """Turns an unhandled exception into a generic JSON 500 INSIDE the CORS middleware, so
+    the response still carries CORS headers for allowed origins (review I6). The outer
+    SecurityHeadersMiddleware keeps its own guard as a last resort and adds the security
+    headers to this response."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        started = False
+
+        async def send_wrapper(message: Message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except Exception:
+            logger.exception("unhandled error on %s %s", scope.get("method"), scope.get("path"))
+            if not started:
+                await _send_internal_error(send, [])
 
 
 class BodySizeLimitMiddleware:

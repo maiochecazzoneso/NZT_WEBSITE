@@ -61,6 +61,11 @@ LOGIN_PER_EMAIL: Final = RateLimit("login:email", 5, 60)
 REGISTER_PER_IP: Final = RateLimit("register:ip", 3, 3600)
 REFRESH_PER_FAMILY: Final = RateLimit("refresh:family", 30, 60)
 DOWNLOADS_PER_USER: Final = RateLimit("downloads:user", 10, 3600)
+# Addition to spec §9.2 (review L6): Google OIDC endpoints, per client IP, same sliding
+# window and fail-closed behaviour. authorize is cheap (no egress) but sets a cookie;
+# callback costs one server-side POST to Google's token endpoint per call.
+GOOGLE_AUTHORIZE_PER_IP: Final = RateLimit("google:authorize:ip", 20, 60)
+GOOGLE_CALLBACK_PER_IP: Final = RateLimit("google:callback:ip", 10, 60)
 
 
 class RateLimitExceededError(Exception):

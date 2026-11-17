@@ -1,6 +1,11 @@
 """Access tokens (spec §6.1, D-A4/D-A6): EdDSA/Ed25519 JWT, claims exactly
-sub, iss, exp, jti, cnf{jkt} (+ iat). Header: alg=EdDSA, typ=at+jwt, kid=RFC 7638
-thumbprint of the public key. Refresh tokens: 32 random bytes, stored as SHA-256 hex."""
+sub, iss, exp, jti, cnf{jkt} (+ iat, + iat_ms). Header: alg=EdDSA, typ=at+jwt, kid=RFC 7638
+thumbprint of the public key. Refresh tokens: 32 random bytes, stored as SHA-256 hex.
+
+``iat_ms`` (addition, review L3) is the issuance instant in milliseconds read from the
+SHARED Redis clock; it is used only to order the token against revocation markers, which
+are written with the same clock (see services/sessions.py). ``iat``/``exp`` stay integer
+seconds from the local clock (RFC 7519 NumericDate, validated by PyJWT)."""
 
 from __future__ import annotations
 
@@ -39,6 +44,14 @@ class AccessTokenClaims:
     iat: int
     exp: int
     jkt: str
+    iat_ms: int  # revocation-ordering instant (shared Redis clock), see module docstring
+
+
+def _strict_int(value: object, name: str) -> int:
+    """JSON integer only: never bool/float/str (review L2 audit)."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise AccessTokenError(f"invalid {name}")
+    return value
 
 
 def load_signing_key(settings: Settings) -> Ed25519PrivateKey:
@@ -63,7 +76,14 @@ class AccessTokenService:
         self.issuer = issuer
         self.ttl = ttl_seconds
 
-    def issue(self, *, user_id: uuid.UUID, jkt: str, now: int | None = None) -> str:
+    def issue(
+        self,
+        *,
+        user_id: uuid.UUID,
+        jkt: str,
+        now: int | None = None,
+        issued_ms: int | None = None,
+    ) -> str:
         iat = int(time.time()) if now is None else now
         payload: dict[str, Any] = {
             "sub": str(user_id),
@@ -72,6 +92,7 @@ class AccessTokenService:
             "exp": iat + self.ttl,
             "jti": str(uuid.uuid4()),
             "cnf": {"jkt": jkt},
+            "iat_ms": time.time_ns() // 1_000_000 if issued_ms is None else issued_ms,
         }
         return jwt.encode(
             payload,
@@ -106,17 +127,20 @@ class AccessTokenService:
         cnf = claims.get("cnf")
         if not isinstance(cnf, dict) or not isinstance(cnf.get("jkt"), str):
             raise AccessTokenError("token is not DPoP-bound (missing cnf.jkt)")
+        sub_raw, jti = claims["sub"], claims["jti"]
+        if not isinstance(sub_raw, str) or not isinstance(jti, str):
+            raise AccessTokenError("invalid sub/jti")
         try:
-            sub = uuid.UUID(str(claims["sub"]))
+            sub = uuid.UUID(sub_raw)
         except ValueError as exc:
             raise AccessTokenError("invalid sub") from exc
-        return AccessTokenClaims(
-            sub=sub,
-            jti=str(claims["jti"]),
-            iat=int(claims["iat"]),
-            exp=int(claims["exp"]),
-            jkt=cnf["jkt"],
-        )
+        iat = _strict_int(claims["iat"], "iat")
+        exp = _strict_int(claims["exp"], "exp")
+        raw_ms = claims.get("iat_ms")
+        # Tokens minted before iat_ms existed: assume the LAST ms of their iat second, i.e.
+        # exactly the old (conservative) second-granularity semantics.
+        iat_ms = iat * 1000 + 999 if raw_ms is None else _strict_int(raw_ms, "iat_ms")
+        return AccessTokenClaims(sub=sub, jti=jti, iat=iat, exp=exp, jkt=cnf["jkt"], iat_ms=iat_ms)
 
 
 def new_refresh_token() -> str:

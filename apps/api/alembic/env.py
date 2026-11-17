@@ -25,8 +25,16 @@ def _migration_url(settings: Settings) -> str:
     explicit = config.attributes.get("database_url")
     if isinstance(explicit, str):
         return explicit
-    secret = settings.migrations_database_url or settings.database_url
-    return secret.get_secret_value()
+    if settings.migrations_database_url is not None:
+        return settings.migrations_database_url.get_secret_value()
+    if settings.is_production:
+        # The API service does not hold the migrator credentials; migrations run in a
+        # separate pipeline step that must provide them explicitly.
+        raise RuntimeError(
+            "NZT_MIGRATIONS_DATABASE_URL is required to run migrations in production "
+            "(migrator role with DDL rights); refusing to fall back to NZT_DATABASE_URL"
+        )
+    return settings.database_url.get_secret_value()
 
 
 def run_migrations_offline() -> None:

@@ -23,6 +23,21 @@ describe('describeError', () => {
     expect(describeError(http(429, 'Too many requests', null), 'login')).toBe(
       'Troppi tentativi in poco tempo. Attendi qualche minuto e riprova.',
     );
+    expect(describeError(http(429, 'Too many requests', 1), 'google-callback')).toBe(
+      'Troppi tentativi in poco tempo. Riprova tra 1 secondo.',
+    );
+  });
+
+  it('503 with Retry-After shows the wait; without it stays generic', () => {
+    expect(describeError(http(503, 'Service busy, please retry shortly', 1), 'login')).toBe(
+      'Servizio momentaneamente sovraccarico. Riprova tra 1 secondo.',
+    );
+    expect(describeError(http(503, 'Service temporarily unavailable', 5), 'register')).toBe(
+      'Servizio momentaneamente sovraccarico. Riprova tra 5 secondi.',
+    );
+    expect(describeError(http(503, null, null), 'login')).toBe(
+      'Servizio temporaneamente non disponibile. Riprova più tardi.',
+    );
   });
 
   it.each([
@@ -72,6 +87,15 @@ describe('parseRetryAfter', () => {
 });
 
 describe('apiFetch', () => {
+  it('reads Retry-After from 503 responses too', async () => {
+    vi.stubGlobal('fetch', async () =>
+      json(503, { detail: 'Service busy, please retry shortly' }, { 'Retry-After': '1' }),
+    );
+    await expect(
+      apiFetch({ method: 'POST', path: '/api/v1/auth/login', body: {} }),
+    ).rejects.toMatchObject({ kind: 'http', status: 503, retryAfterSeconds: 1 });
+  });
+
   it('turns HTTP errors into ApiError with detail and Retry-After', async () => {
     vi.stubGlobal('fetch', async () =>
       json(429, { detail: 'Too many requests' }, { 'Retry-After': '17' }),

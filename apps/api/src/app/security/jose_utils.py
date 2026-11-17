@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
+import re
 from collections.abc import Mapping
+
+# Unpadded base64url alphabet only (RFC 4648 §5, RFC 7515 §2). ASCII-only on purpose.
+_B64URL = re.compile(r"[A-Za-z0-9_-]*", re.ASCII)
 
 
 def b64url_encode(data: bytes) -> str:
@@ -13,9 +18,19 @@ def b64url_encode(data: bytes) -> str:
 
 
 def b64url_decode(data: str) -> bytes:
-    if not isinstance(data, str) or any(c in data for c in "=+/ \n\r\t"):
+    """STRICT canonical base64url (review I3): alphabet [A-Za-z0-9_-] only, no padding, no
+    whitespace, no impossible length, and the unused trailing bits must be zero (checked by
+    re-encoding). Every byte string therefore has exactly ONE accepted encoding, so a JWK
+    cannot be spelled several ways to obtain several RFC 7638 thumbprints."""
+    if not isinstance(data, str) or _B64URL.fullmatch(data) is None or len(data) % 4 == 1:
         raise ValueError("invalid base64url")
-    return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+    try:
+        raw = base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("invalid base64url") from exc
+    if b64url_encode(raw) != data:
+        raise ValueError("non-canonical base64url")
+    return raw
 
 
 def sha256_b64url(data: str | bytes) -> str:

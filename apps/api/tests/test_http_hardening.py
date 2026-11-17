@@ -100,10 +100,11 @@ async def test_cors_preflight_portal_only(client: httpx.AsyncClient):
     assert bad_header.status_code == 400
 
 
-async def test_cors_simple_request_and_no_exposed_headers(client: httpx.AsyncClient):
+async def test_cors_simple_request_exposes_only_retry_after(client: httpx.AsyncClient):
     resp = await client.get("/healthz", headers={"Origin": PORTAL_ORIGIN})
     assert resp.headers["access-control-allow-origin"] == PORTAL_ORIGIN
-    assert "access-control-expose-headers" not in resp.headers
+    # Review I6: only Retry-After is exposed (the portal shows the real wait time).
+    assert resp.headers["access-control-expose-headers"] == "Retry-After"
     other = await client.get("/healthz", headers={"Origin": "https://evil.example"})
     assert "access-control-allow-origin" not in other.headers
 
@@ -129,6 +130,7 @@ async def test_docs_disabled_in_production(monkeypatch: pytest.MonkeyPatch):
     settings = make_settings(
         environment="production",
         database_sslmode="verify-full",
+        trusted_proxy_cidrs=["10.0.0.0/8"],
         access_token_private_key_pem=pem,
         oauth_state_key="A" * 43,
         launcher_sha256="ab" * 32,
