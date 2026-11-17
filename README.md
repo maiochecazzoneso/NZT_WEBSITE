@@ -75,6 +75,20 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy
 
 Configurazione: variabili `NZT_*` (modello in `apps/api/.env.example`). Architettura e runbook di sicurezza: `docs/architettura_sicurezza_area_clienti.md`.
 
+## Stack completo in Docker (prova Area Clienti)
+
+Dalla radice, un solo comando builda e avvia tutto (PostgreSQL, Redis, migrazioni, API, portale, landing):
+
+```bash
+docker compose up --build
+```
+
+- Landing: http://localhost:4321 (bottone "Area Clienti" nella Hero e nella navbar)
+- Portale: http://localhost:8080
+- API: http://localhost:8000/docs
+- Le email di verifica sono stampate nei log: `docker compose logs -f api`. Google OAuth non è configurato.
+- Reset dei dati: `docker compose down -v`. Credenziali solo di prova.
+
 ## Documentazione
 
 La documentazione (architettura grafica e tecnica, specifiche della hero e dell'Area Clienti) è in `docs/`.

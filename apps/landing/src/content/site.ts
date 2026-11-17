@@ -3,8 +3,9 @@
 
 export const site = {
   name: 'NZT Solutions',
-  // Area Clienti futura (architettura tecnica §9, grafica §5.2.1): sottodominio non ancora attivo
-  clientAreaUrl: 'https://clienti.nztsolutions.it',
+  // Area Clienti (architettura tecnica §9, grafica §5.2.1). Sovrascrivibile in build con
+  // PUBLIC_CLIENT_AREA_URL (es. http://localhost:8080 per lo stack di prova in Docker).
+  clientAreaUrl: import.meta.env.PUBLIC_CLIENT_AREA_URL || 'https://clienti.nztsolutions.it',
   legal: {
     vat: 'P.IVA da definire', // PLACEHOLDER: partita IVA
     // Pagine legali previste (architettura tecnica §4) ma non ancora create: mostrate come testo, senza link

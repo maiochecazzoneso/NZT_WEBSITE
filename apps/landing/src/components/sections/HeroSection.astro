@@ -5,6 +5,7 @@
 // con un cross-fade (timeline DOM in src/lib/hero-scroll.ts, indipendente dall'isola). h1 e copy del primo schermo
 // da definire (punto aperto SEO).
 import HeroPillScrollytelling from '@interactive/HeroPillScrollytelling';
+import { site } from '@/content/site';
 ---
 
 <!-- Fallback SEO e No-JS: se JS è disattivato, headline, sottotitolo e CTA (stage-2) sono subito visibili -->
@@ -106,10 +107,10 @@ import HeroPillScrollytelling from '@interactive/HeroPillScrollytelling';
             Inizia un Progetto
           </a>
           <a
-            href="#servizi"
+            href={site.clientAreaUrl}
             class="inline-flex items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[#0c0c0e]/90 px-7 py-3.5 text-sm font-medium text-white backdrop-blur-md transition-all duration-300 hover:border-[var(--border-hover)] hover:bg-[var(--bg-surface-elevated)]"
           >
-            Esplora i Servizi
+            Area Clienti
           </a>
         </div>
       </div>

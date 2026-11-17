@@ -1,0 +1,84 @@
+# Stack completo per provare l'Area Clienti in locale:
+#   docker compose up --build
+# Landing  http://localhost:4321   Portale http://localhost:8080   API http://localhost:8000/docs
+# Email di verifica: stampate nei log dell'API (docker compose logs -f api). Google OAuth non configurato.
+# Solo credenziali di PROVA: non riutilizzare in produzione.
+name: nzt
+
+x-api-env: &api-env
+  NZT_ENVIRONMENT: development
+  NZT_API_PUBLIC_BASE_URL: http://localhost:8000
+  NZT_PORTAL_ORIGINS: http://localhost:8080
+  NZT_STORAGE_PUBLIC_ORIGIN: http://localhost:9000
+  NZT_DATABASE_URL: postgresql+asyncpg://nzt_app:nzt_app_demo@postgres:5432/nzt
+  NZT_MIGRATIONS_DATABASE_URL: postgresql+asyncpg://nzt_migrator:nzt_migrator_demo@postgres:5432/nzt
+  NZT_REDIS_URL: redis://redis:6379/0
+  NZT_DIRECT_CLIENT_CONNECTIONS: "true"
+  NZT_MAIL_BACKEND: console
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_demo
+      ROLES_SQL_FILE: /nzt-sql/roles.sql
+      NZT_DB_NAME: nzt
+      NZT_MIGRATOR_PASSWORD: nzt_migrator_demo
+      NZT_APP_PASSWORD: nzt_app_demo
+    volumes:
+      - ./apps/api/scripts/db/roles.sql:/nzt-sql/roles.sql:ro
+      - ./apps/api/scripts/db/init-roles.sh:/docker-entrypoint-initdb.d/10-init-roles.sh:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d nzt"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    build: ./apps/api
+    command: ["alembic", "upgrade", "head"]
+    environment: *api-env
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    build: ./apps/api
+    environment: *api-env
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  portal:
+    build:
+      context: .
+      dockerfile: apps/portal/Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
+    ports:
+      - "8080:80"
+    depends_on: [api]
+
+  landing:
+    build:
+      context: .
+      dockerfile: apps/landing/Dockerfile
+      args:
+        PUBLIC_CLIENT_AREA_URL: http://localhost:8080
+    ports:
+      - "4321:80"
+
+volumes:
+  pgdata:
