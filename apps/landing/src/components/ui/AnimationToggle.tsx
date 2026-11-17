@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '@nanostores/react';
 import { Pause, Play } from 'lucide-react';
-import { Button } from '@/components/ui/Button';
+import { Button } from '@nzt/ui';
 import { animationsPausedStore } from '@/lib/stores/uiStore';
 
 export function AnimationToggle() {

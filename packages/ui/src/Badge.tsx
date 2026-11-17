@@ -1,7 +1,7 @@
-// src/components/ui/Badge.tsx
+// packages/ui/src/Badge.tsx (@nzt/ui)
 import React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
-import { cn } from '@/lib/utils';
+import { cn } from './cn';
 
 const badgeVariants = cva(
   'inline-flex items-center gap-2.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3.5 py-1.5 font-mono text-xs uppercase tracking-widest',

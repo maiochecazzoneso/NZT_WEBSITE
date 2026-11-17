@@ -1,0 +1,112 @@
+/*
+ * @nzt/ui — design tokens condivisi (architettura grafica §2–§3, §5.2.3).
+ * Usato da apps/landing (src/styles/global.css) e apps/portal (src/index.css) subito dopo
+ * `@import 'tailwindcss';`. Non importa Tailwind da solo: il consumer resta proprietario del build.
+ * I font @fontsource vanno importati dal consumer (landing: MainLayout.astro, portal: src/main.tsx).
+ */
+
+/* Font locali @fontsource (importati dal consumer) collegati alle utility font-sans / font-mono */
+@theme {
+  --font-sans:
+    'Geist Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+    'Segoe UI Symbol', 'Noto Color Emoji';
+  --font-mono:
+    'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  /* Scala tipografica §3: "tracking-widest (0.08em)" per Etichette / Badge (default Tailwind = 0.1em) */
+  --tracking-widest: 0.08em;
+  /* Scala tipografica §3: "tracking-snug (-0.015em)" per i titoli card */
+  --tracking-snug: -0.015em;
+
+  /* Scala tipografica fluida §3 → utility text-h2 / text-h3 / text-lead (dimensione, interlinea, tracking, peso) */
+  --text-h2: clamp(1.875rem, 3vw + 0.5rem, 3rem);
+  --text-h2--line-height: 1.15;
+  --text-h2--letter-spacing: -0.025em;
+  --text-h2--font-weight: 500;
+  --text-h3: clamp(1.25rem, 1.5vw + 0.5rem, 1.5rem);
+  --text-h3--line-height: 1.3;
+  --text-h3--letter-spacing: -0.015em;
+  --text-h3--font-weight: 500;
+  --text-lead: clamp(1.05rem, 1vw + 0.5rem, 1.25rem);
+  --text-lead--line-height: 1.65;
+
+  /* Curva di easing unificata §5.1 → utility ease-out-expo */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  :root {
+    --bg-primary: #050505;
+    --bg-surface: #0c0c0e;
+    --bg-surface-elevated: #16161a;
+    --bg-glass: rgba(12, 12, 14, 0.72);
+    --text-primary: #fafafa;
+    --text-muted: #a1a1aa;
+    --text-subtle: #52525b;
+    --accent-primary: #ffffff;
+    --accent-glow: rgba(255, 255, 255, 0.1);
+    --border-subtle: rgba(255, 255, 255, 0.08);
+    --border-hover: rgba(255, 255, 255, 0.22);
+  }
+
+  html {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    scroll-behavior: auto; /* Gestito da Lenis */
+    /* Navbar fissa 64px (§5.2.1): le ancore non finiscono sotto l'header (letto anche da Lenis.scrollTo) */
+    scroll-padding-top: 4rem;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: #ffffff;
+    color: #050505;
+  }
+}
+
+/* Accelerazione GPU per evitare repaint durante lo scroll */
+.gpu-accelerated {
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+/* Gradiente tipografico platino/argento per gli H1 e H2 */
+.text-metallic {
+  background: linear-gradient(180deg, #ffffff 0%, #ffffff 45%, #71717a 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Griglia tecnica di sfondo a bassissima opacità per la Bento Grid */
+.bg-technical-grid {
+  background-size: 24px 24px;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+}
+
+/* Effetto Spotlight sobrio controllato dal cursore */
+.specular-card {
+  position: relative;
+  background:
+    radial-gradient(
+      600px circle at var(--mouse-x, 50%) var(--mouse-y, -200px),
+      rgba(255, 255, 255, 0.055),
+      transparent 45%
+    ),
+    var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  transition:
+    border-color 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.specular-card:hover {
+  border-color: var(--border-hover);
+}
+
+/* Variante "Standard NZT Solutions" (§5.2.3): bordo continuo rgba(255,255,255,0.20) */
+.specular-card.specular-card-strong {
+  border-color: rgba(255, 255, 255, 0.2);
+}

@@ -1,6 +1,6 @@
-// src/components/ui/Card.tsx
+// packages/ui/src/Card.tsx (@nzt/ui)
 import React, { useRef } from 'react';
-import { cn } from '@/lib/utils';
+import { cn } from './cn';
 
 interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
   spotlight?: boolean;

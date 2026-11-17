@@ -6,6 +6,10 @@
     "dev:landing": "pnpm --filter @nzt/landing dev",
     "build:landing": "pnpm --filter @nzt/landing build",
     "preview:landing": "pnpm --filter @nzt/landing preview",
+    "dev:portal": "pnpm --filter @nzt/portal dev",
+    "build:portal": "pnpm --filter @nzt/portal build",
+    "preview:portal": "pnpm --filter @nzt/portal preview",
+    "test": "pnpm -r --if-present test",
     "lint": "pnpm -r lint",
     "format": "pnpm -r format"
   },

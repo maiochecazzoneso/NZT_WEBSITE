@@ -1,7 +1,7 @@
-// src/components/ui/Button.tsx
+// packages/ui/src/Button.tsx (@nzt/ui)
 import React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
-import { cn } from '@/lib/utils';
+import { cn } from './cn';
 
 export const buttonVariants = cva(
   'inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 disabled:pointer-events-none disabled:opacity-40 cursor-pointer',
