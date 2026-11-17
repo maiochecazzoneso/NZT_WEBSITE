@@ -398,23 +398,22 @@ export default defineConfig({
 
 ---
 
-## 9. Piano di Espansione Futura: Area Clienti (`clienti.nztsolutions.it`)
+## 9. Area Clienti (`clienti.nztsolutions.it`)
 
-Questa architettura è stata progettata affinché l'aggiunta della futura Area Clienti avvenga a **costo di refactoring zero**.
+L'Area Clienti è stata aggiunta seguendo questo piano: il design system della landing è stato estratto in un pacchetto condiviso senza modificare l'output della landing (build verificata identica).
 
-### Fase 1 (Oggi): Repository Singolo per la Landing Page
-* Il sito vive su `nztsolutions.it` ed è distribuito gratuitamente su Edge CDN (Cloudflare Pages o Vercel).
-* Tutti i bottoni, badge, input e card vengono creati dentro `src/components/ui/` usando solo React e Tailwind (senza dipendenze specifiche di Astro).
+### Fase 1 (completata): Repository Singolo per la Landing Page
+* Il sito nasceva come repository singolo per `nztsolutions.it`.
+* Bottoni, badge e card erano creati in `src/components/ui/` usando solo React e Tailwind (senza dipendenze specifiche di Astro), il che ne ha permesso l'estrazione.
 
-### Fase 2 (Futuro): Creazione di `clienti.nztsolutions.it`
-Quando deciderai di aprire l'Area Clienti, avrai due opzioni immediate:
-1. **Condivisione immediata del Design System (Monorepo `pnpm workspaces`):**
-   * Sposti la cartella `src/components/ui` in un pacchetto condiviso `packages/ui`.
-   * Sia la landing (`apps/landing` in Astro) sia il portale clienti (`apps/portal` in Next.js o React Vite) importano esattamente gli stessi componenti (`import { Button, Card } from '@nzt/ui'`).
-2. **Configurazione DNS (Zero costi di dominio):**
-   * Nel pannello DNS di `nztsolutions.it`, mantieni il record principale `@` puntato alla CDN della landing page.
-   * Aggiungi un singolo record `CNAME` per `clienti` che punta all'applicazione dell'Area Clienti.
-   * Nella Navbar della landing page ti basterà attivare il pulsante **"Area Clienti"** che punta a `https://clienti.nztsolutions.it`.
+### Fase 2 (implementata): Monorepo `pnpm workspaces` e `clienti.nztsolutions.it`
+* **Struttura del monorepo:**
+  * `apps/landing` — sito Astro pubblico (`nztsolutions.it`).
+  * `apps/portal` — Area Clienti, SPA React 19 + Vite (`clienti.nztsolutions.it`).
+  * `apps/api` — backend FastAPI (`api.nztsolutions.it`): autenticazione locale e Google, sessioni DPoP con refresh token rotation, distribuzione protetta del Launcher.
+  * `packages/ui` — design system condiviso `@nzt/ui` (Button, Card, Badge, Input, Field, Alert, `tokens.css`), importato da landing e portale (`import { Button } from '@nzt/ui'`). Sostituisce `src/components/ui/{Button,Card,Badge}.tsx` e `src/lib/utils.ts` citati nelle sezioni precedenti.
+* **DNS:** il record principale resta sulla landing; `clienti` e `api` puntano ai rispettivi servizi (target di hosting: Railway). Il pulsante **"Area Clienti"** della Navbar punta già a `https://clienti.nztsolutions.it`.
+* **Sicurezza:** l'architettura di sicurezza dell'Area Clienti come implementata (topologia, modello delle minacce, DPoP, cookie, rate limit, configurazione e runbook) è descritta in [`architettura_sicurezza_area_clienti.md`](./architettura_sicurezza_area_clienti.md); la specifica di partenza è [`specifiche_architetturali_area_clienti_nzt_solutions.md`](./specifiche_architetturali_area_clienti_nzt_solutions.md).
 
 ---
 
