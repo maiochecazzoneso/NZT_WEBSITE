@@ -61,6 +61,7 @@ docker compose up --build
 
 - Home: http://localhost:4321 · Portale: http://localhost:8080 · API: http://localhost:8000/docs
 - Le email di verifica sono nei log: `docker compose logs -f api`. Google OAuth non è configurato. Chiavi Turnstile di test.
+- Login di prova: `admin@example.com` / `admin` (l'email deve essere valida, quindi non basta "admin"). Creato dal servizio `seed`, solo stack locale.
 - Reset dei dati: `docker compose down -v`. Credenziali solo di prova.
 - Il vecchio compose di sviluppo della Home è `docker-compose.dev.yml`.
 - Script utili: `pnpm dev:portal`, `pnpm build:portal`, `pnpm test:portal`.

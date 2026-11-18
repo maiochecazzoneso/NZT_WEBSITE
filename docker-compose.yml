@@ -1,6 +1,7 @@
 # Stack completo per provare l'Area Clienti in locale:
 #   docker compose up --build
 # Landing  http://localhost:4321 (Home di main + pulsante Area Clienti -> /accedi)   Portale http://localhost:8080   API http://localhost:8000/docs
+# Login di prova: admin@example.com / admin (l'email deve essere valida: "admin" da solo non passa la validazione).
 # Email di verifica: stampate nei log dell'API (docker compose logs -f api). Google OAuth non configurato.
 # Solo credenziali di PROVA: non riutilizzare in produzione.
 name: nzt
@@ -52,6 +53,16 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
 
+  # Account di prova: admin@example.com / admin (verificato, con accesso ai download). Solo stack locale.
+  seed:
+    build: ./apps/api
+    command: ["python", "scripts/seed_dev_admin.py"]
+    environment:
+      <<: *api-env
+      NZT_SEED_DEV_ADMIN: "true"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
   api:
     build: ./apps/api
     environment: *api-env
@@ -59,6 +70,7 @@ services:
       - "8000:8000"
     depends_on:
       migrate: { condition: service_completed_successfully }
+      seed: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
 
   portal:

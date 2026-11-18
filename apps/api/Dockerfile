@@ -8,6 +8,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
 COPY alembic ./alembic
 COPY alembic.ini ./
+COPY scripts/seed_dev_admin.py ./scripts/seed_dev_admin.py
 RUN uv sync --frozen --no-dev
 RUN useradd --system --uid 10001 nzt
 USER nzt
