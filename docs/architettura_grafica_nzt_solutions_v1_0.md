@@ -37,7 +37,7 @@ Tutti i token sono definiti in modo semantico per garantire coerenza tra la Land
 | **Bordo Sottile (Hairline)** | `--border-subtle` | `rgba(255, 255, 255, 0.08)` | Contorno standard di $1\text{ px}$ per card, divisori di sezione, input e griglie tecniche. |
 | **Bordo Attivo (Specular Edge)** | `--border-hover` | `rgba(255, 255, 255, 0.22)` | Illuminazione sobria del bordo durante l'interazione (`:hover` o `:focus-visible`). |
 
-### 2.2 Configurazione Completa `src/styles/global.css`
+### 2.2 Configurazione Completa `frontend/landing/src/styles/global.css`
 Questo file sostituisce la palette iniziale con il nuovo sistema monocromatico e introduce le utility grafiche per i riflessi metallici e l'accelerazione hardware:
 
 ```css
@@ -171,7 +171,7 @@ Nel `package.json`, assicurarsi di includere i pacchetti WebGL (che verranno sca
 }
 ```
 
-### 4.4 Codice Completo: `src/components/interactive/HeroPill3D.tsx`
+### 4.4 Codice Completo: `frontend/landing/src/components/interactive/HeroPill3D.tsx`
 Questo componente implementa la pillola 3D procedurale (zero file `.glb` esterni da scaricare, peso ridotto al minimo), si sincronizza con `animationsPausedStore` e interrompe automaticamente il rendering WebGL quando la Hero esce dallo schermo (`IntersectionObserver`).
 
 ```tsx
@@ -453,7 +453,7 @@ export default function HeroPill3D() {
 }
 ```
 
-### 4.5 Integrazione SEO-First in `src/components/sections/HeroSection.astro`
+### 4.5 Integrazione SEO-First in `frontend/landing/src/components/sections/HeroSection.astro`
 Il testo `<h1>`, il sottotitolo e le CTA sono renderizzati in HTML statico puro (**$0\text{ KB}$ di JS**). Mentre il browser è in fase di caricamento iniziale, nel contenitore di destra viene mostrato un **placeholder SVG/CSS vettoriale ultraleggero** che scompare in dissolvenza non appena `HeroPill3D` completa l'idratazione in `client:idle`.
 
 ```astro
@@ -558,11 +558,11 @@ Tutte le sezioni successive alla Hero adottano micro-interazioni leggere che non
 
 ---
 
-## 6. Componenti Atomici Condivisibili (`src/components/ui/`)
+## 6. Componenti Atomici Condivisibili (`frontend/landing/src/components/ui/`)
 
 Questi componenti sono pronti per essere utilizzati sia nella Landing Page sia nella futura Area Clienti (`clienti.nztsolutions.it`).
 
-### 6.1 `src/components/ui/Card.tsx` (Con Spotlight Monocromatico Leggero)
+### 6.1 `frontend/landing/src/components/ui/Card.tsx` (Con Spotlight Monocromatico Leggero)
 Aggiorna le coordinate del mouse tramite variabili CSS locali senza mai innescare un *re-render* di React:
 
 ```tsx
@@ -601,7 +601,7 @@ export function Card({ className, spotlight = true, children, ...props }: CardPr
 }
 ```
 
-### 6.2 `src/components/ui/Button.tsx` (Varianti Monocromatiche CVA)
+### 6.2 `frontend/landing/src/components/ui/Button.tsx` (Varianti Monocromatiche CVA)
 ```tsx
 // src/components/ui/Button.tsx
 import React from 'react';

@@ -26,11 +26,14 @@ services:
       timeout: 3s
       retries: 30
 
-  # Utenti a privilegio minimo (apps/api/scripts/db/create_roles.py), poi termina. Le credenziali
+  # Utenti a privilegio minimo (database/create_roles.py), poi termina. Le credenziali
   # root restano in questo container: l'API non le vede mai.
   mongo-init:
-    build: ./apps/api
-    command: ["python", "scripts/db/create_roles.py"]
+    build: ./backend
+    # Lo script vive in database/ ed e' montato in sola lettura; gira con l'ambiente Python dell'API.
+    command: ["python", "/database/create_roles.py"]
+    volumes:
+      - ./database:/database:ro
     environment:
       NZT_MONGODB_ROOT_URI: mongodb://root:root_demo@mongo:27017/?authSource=admin
       NZT_DB_NAME: nzt
@@ -48,9 +51,9 @@ services:
       timeout: 3s
       retries: 30
 
-  # All'avvio: schema MongoDB + account di prova (vedi apps/api/docker-entrypoint.sh), poi il server.
+  # All'avvio: schema MongoDB + account di prova (vedi backend/docker-entrypoint.sh), poi il server.
   api:
-    build: ./apps/api
+    build: ./backend
     environment:
       NZT_ENVIRONMENT: development
       NZT_API_PUBLIC_BASE_URL: http://localhost:8000
@@ -74,7 +77,7 @@ services:
   portal:
     build:
       context: .
-      dockerfile: apps/portal/Dockerfile
+      dockerfile: frontend/portal/Dockerfile
       args:
         VITE_API_BASE_URL: http://localhost:8000
     ports:
@@ -83,7 +86,7 @@ services:
   admin:
     build:
       context: .
-      dockerfile: apps/admin/Dockerfile
+      dockerfile: frontend/admin/Dockerfile
       args:
         VITE_API_BASE_URL: http://localhost:8000
     ports:
@@ -92,7 +95,7 @@ services:
   landing:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: frontend/landing/Dockerfile
       args:
         PUBLIC_CLIENT_AREA_URL: http://localhost:8080
         PUBLIC_TURNSTILE_SITE_KEY: 1x00000000000000000000AA   # chiave di TEST Cloudflare

@@ -1,9 +1,9 @@
 # NZT Solutions — Area Clienti: Architettura di Sicurezza (v1.0)
 
 > **Ambito:** Area Clienti `clienti.nztsolutions.it` (portale) + API `api.nztsolutions.it` + distribuzione del Launcher
-> **Stato:** descrive il sistema **come implementato** sul branch `implementazione-area-clienti` (commit `2ab0e83` backend, `72e70ea` portale e `packages/ui`; database migrato da PostgreSQL a **MongoDB esterno** il 2026-11-18, §5 e §16)
+> **Stato:** descrive il sistema **come implementato** sul branch `implementazione-area-clienti` (commit `2ab0e83` backend, `72e70ea` portale e `frontend/ui`; database migrato da PostgreSQL a **MongoDB esterno** il 2026-11-18, §5 e §16)
 > **Documento di riferimento originale:** [`specifiche_architetturali_area_clienti_nzt_solutions.md`](./specifiche_architetturali_area_clienti_nzt_solutions.md) (di seguito "la specifica")
-> **Autorità:** in caso di disaccordo tra questo documento e il codice, vale il codice; i riferimenti a file (`apps/api/src/app/...`) permettono la verifica puntuale.
+> **Autorità:** in caso di disaccordo tra questo documento e il codice, vale il codice; i riferimenti a file (`backend/src/app/...`) permettono la verifica puntuale.
 
 ---
 
@@ -11,8 +11,8 @@
 
 Questo documento è la descrizione unica e autorevole dell'architettura di sicurezza dell'Area Clienti. Ogni requisito della specifica (topologia, modello dati, Argon2id, timing, OAuth + PKCE + state, pre-hijacking, DPoP, access/refresh token, RTR + reuse detection, Web Locks, distribuzione del launcher, contratti API, header, rate limit, piano a fasi) è riformulato **come implementato**, con il file che lo implementa e il test che lo verifica.
 
-**Nel perimetro:** `apps/api` (FastAPI), `apps/portal` (SPA React), `packages/ui` (solo componenti di presentazione, nessuna logica di sicurezza), database, Redis, object storage, integrazione Google.
-**Fuori perimetro:** la landing `apps/landing` (sito statico pubblico, nessun dato utente; rilevante solo come sottodominio dello stesso sito registrabile, vedi §8.3), il Launcher desktop (non presente nel repository), l'infrastruttura Railway (non configurata nel repository, vedi §24).
+**Nel perimetro:** `backend` (FastAPI), `frontend/portal` (SPA React), `frontend/ui` (solo componenti di presentazione, nessuna logica di sicurezza), database, Redis, object storage, integrazione Google.
+**Fuori perimetro:** la landing `frontend/landing` (sito statico pubblico, nessun dato utente; rilevante solo come sottodominio dello stesso sito registrabile, vedi §8.3), il Launcher desktop (non presente nel repository), l'infrastruttura Railway (non configurata nel repository, vedi §24).
 
 Marcatori usati nelle tabelle:
 
@@ -36,11 +36,11 @@ Marcatori usati nelle tabelle:
 | **Database** | MongoDB 8 esterno (cluster condiviso, es. Atlas; un database per servizio) | Utenti (con identità ed entitlement incorporati), famiglie/refresh token, token di verifica email, audit |
 | **Egress** | httpx 0.28 (solo verso Google), boto3 1.44 (solo firma locale SigV4) | OIDC Google, URL prefirmati |
 | **Portale** | React 19 + Vite 6.4 (SPA), TypeScript strict, Tailwind 4; nessun router o form library di terze parti | Token in memoria, chiave DPoP WebCrypto, Web Locks |
-| **Design system** | `packages/ui` (`@nzt/ui`): Button, Card, Badge, Input, Field, Alert, `tokens.css` | Nessuna logica di sicurezza |
-| **Package manager** | pnpm 10.28 (workspaces `apps/*`, `packages/*`), uv (Python) | Lockfile `pnpm-lock.yaml`, `apps/api/uv.lock` |
+| **Design system** | `frontend/ui` (`@nzt/ui`): Button, Card, Badge, Input, Field, Alert, `tokens.css` | Nessuna logica di sicurezza |
+| **Package manager** | pnpm 10.28 (workspaces `apps/*`, `packages/*`), uv (Python) | Lockfile `pnpm-lock.yaml`, `backend/uv.lock` |
 
 ```text
-apps/
+frontend/
 ├── landing/   Sito pubblico Astro (nztsolutions.it) — invariato funzionalmente
 ├── portal/    SPA Area Clienti (clienti.nztsolutions.it)
 │   ├── src/auth/        dpop.ts, keyStore.ts, keyManager.ts, tokenStore.ts, session.ts
@@ -48,15 +48,16 @@ apps/
 │   ├── src/lib/         locks.ts, oauthCallback.ts, safeUrls.ts, passwordPolicy.ts, router.tsx
 │   ├── csp.config.ts    fonte unica di CSP e header del portale
 │   └── deploy/          _headers, Caddyfile, _redirects (riferimento di deploy)
-└── api/       Backend FastAPI (api.nztsolutions.it)
+├── admin/     Dashboard amministratore (stessa architettura di sicurezza del portale)
+└── ui/        @nzt/ui (consumato da sorgente da portal e admin)
+backend/       Backend FastAPI (api.nztsolutions.it)
     ├── src/app/security/  dpop.py, tokens.py, passwords.py, sealed.py, jose_utils.py
     ├── src/app/services/  sessions.py (RTR), google.py (OIDC), storage.py (presign)
     ├── src/app/routers/   auth.py, google.py, downloads.py, health.py
     ├── src/app/           config.py, db.py (client MongoDB), schema.py (validatori + indici), cookies.py,
     │                      client_ip.py, ratelimit.py, middleware.py, errors.py, deps.py, main.py
-    └── scripts/db/        create_roles.py (utenti MongoDB a privilegio minimo)
-packages/
-└── ui/        @nzt/ui (consumato da sorgente da landing e portal)
+    └── scripts/           test-services.sh (MongoDB + Redis di test), seed_dev_users.py
+database/      create_roles.py (utenti MongoDB), migrate_postgres_to_mongo.py (una tantum)
 ```
 
 ---
@@ -73,7 +74,7 @@ packages/
 | `https://<account>.r2.cloudflarestorage.com` | Endpoint S3 di R2 (bucket privato) | Raggiunto **solo dal browser** tramite URL prefirmato (navigazione), mai dall'API |
 | `https://accounts.google.com`, `oauth2.googleapis.com`, `www.googleapis.com` | Google OIDC | Autorizzazione (navigazione browser), token endpoint e JWKS (egress API) |
 
-Portale e API sono **origin diversi ma stesso sito** (`nztsolutions.it`): questo è un requisito funzionale, perché il cookie di refresh `SameSite=Strict` viene inviato dalle `fetch` del portale verso l'API solo se le due origini sono same-site. Tutti gli URL pubblici sono variabili d'ambiente con default `.it` (`apps/api/src/app/config.py`).
+Portale e API sono **origin diversi ma stesso sito** (`nztsolutions.it`): questo è un requisito funzionale, perché il cookie di refresh `SameSite=Strict` viene inviato dalle `fetch` del portale verso l'API solo se le due origini sono same-site. Tutti gli URL pubblici sono variabili d'ambiente con default `.it` (`backend/src/app/config.py`).
 
 > **Attenzione (deploy):** i domini generati di Railway (`*.up.railway.app`) sono, per quanto noto, nella Public Suffix List: portale e API su due sottodomini generati sarebbero **cross-site** e il cookie `SameSite=Strict` non verrebbe inviato. In produzione vanno usati i domini personalizzati. **NON VERIFICATO** su Railway.
 
@@ -83,10 +84,10 @@ Il target di hosting è Railway. **Nessuna configurazione Railway, Dockerfile o 
 
 | Servizio | Artefatto | Esposizione | Stato nel repository |
 | :--- | :--- | :--- | :--- |
-| Landing | `apps/landing/dist` (statico) | Pubblico, `nztsolutions.it` | Build verificata; nessuna config Railway |
-| Portale | `apps/portal/dist` (statico) | Pubblico, `clienti.nztsolutions.it` | Header pronti in `deploy/Caddyfile` (riusabile in un container Caddy) e `deploy/_headers` (Cloudflare Pages/Netlify); nessuna config Railway |
+| Landing | `frontend/landing/dist` (statico) | Pubblico, `nztsolutions.it` | Build verificata; nessuna config Railway |
+| Portale | `frontend/portal/dist` (statico) | Pubblico, `clienti.nztsolutions.it` | Header pronti in `deploy/Caddyfile` (riusabile in un container Caddy) e `deploy/_headers` (Cloudflare Pages/Netlify); nessuna config Railway |
 | API | container Python, `uvicorn app.main:create_app --factory --no-proxy-headers` | Pubblico tramite edge Railway, `api.nztsolutions.it` | Codice pronto; Dockerfile assente |
-| MongoDB 8 | cluster **esterno** (es. Atlas), condiviso con gli altri servizi: un database dedicato `nzt` | **Non** sulla rete privata Railway: TLS obbligatorio con verifica di certificato e hostname, autenticazione SCRAM, IP Access List / private endpoint lato cluster (§16.3) | Utenti/ruolo da creare (§16.1, `scripts/db/create_roles.py` o UI Atlas) |
+| MongoDB 8 | cluster **esterno** (es. Atlas), condiviso con gli altri servizi: un database dedicato `nzt` | **Non** sulla rete privata Railway: TLS obbligatorio con verifica di certificato e hostname, autenticazione SCRAM, IP Access List / private endpoint lato cluster (§16.3) | Utenti/ruolo da creare (§16.1, `database/create_roles.py` o UI Atlas) |
 | Redis 7 | servizio gestito | **Solo rete privata** (`redis.railway.internal`) | — |
 | Object storage | Cloudflare R2 (o S3), bucket privato `nzt-binaries` | Accesso solo con URL prefirmati | Credenziali di sola lettura da creare |
 
@@ -160,7 +161,7 @@ Il target di hosting è Railway. **Nessuna configurazione Railway, Dockerfile o 
 
 ### 4.3 Matrice minaccia → mitigazione → implementazione → verifica
 
-Riferimenti ai test: backend `apps/api/tests/<file>::<test>`, portale `apps/portal/tests/<file>`, E2E = scenario numerato di §22.3.
+Riferimenti ai test: backend `backend/tests/<file>::<test>`, portale `frontend/portal/tests/<file>`, E2E = scenario numerato di §22.3.
 
 | # | Minaccia | Mitigazione | Dove | Verifica |
 | :--- | :--- | :--- | :--- | :--- |
@@ -176,7 +177,7 @@ Riferimenti ai test: backend `apps/api/tests/<file>::<test>`, portale `apps/port
 | T10 | Credential stuffing / brute force | Login 5/min per IP **e** 5/min per email; registrazione 3/h per IP; Google authorize 20/min e callback 10/min per IP; Argon2id costoso | `ratelimit.py`, `routers/auth.py`, `routers/google.py` | `test_ratelimit::test_login_per_ip`, `test_login_per_email`, `test_register_per_ip`; `test_security_fixes::test_l6_google_callback_rate_limited_per_ip`, `test_l6_google_authorize_rate_limited_per_ip`; E2E 14 |
 | T11 | Enumerazione account | Login: messaggio unico `Invalid email or password`; registrazione su email esistente: `400 Registration failed` generico | `routers/auth.py` | `test_register_existing_email_generic_failure`, `test_login_happy_path_and_wrong_password` |
 | T12 | Timing attack sul login | Verifica Argon2id fittizia (stessi parametri) se l'utente non esiste, è solo-Google o è disattivato | `security/passwords.py::dummy_verify` | `test_login_unknown_user_runs_dummy_verify`, `test_login_google_only_and_inactive_users_dummy_verify` (verificano che la verifica fittizia avvenga, non misurano i tempi) |
-| T13 | NoSQL injection (operatori `$ne`/`$gt`, JavaScript lato server) | Filtri costruiti solo da valori tipizzati lato server (UUID, hash calcolati dal server, `str` validate da Pydantic `extra="forbid"`); nessun corpo di richiesta usato come filtro; nessun `$where`/`$function`; utente applicativo senza DDL | tutto `src/app`, `scripts/db/create_roles.py` | `test_mongo::test_operator_payloads_are_rejected_before_the_database`, `test_no_server_side_javascript_in_queries`, `test_app_user_is_dml_only_on_its_database`, `test_schema_user_is_not_cluster_admin` |
+| T13 | NoSQL injection (operatori `$ne`/`$gt`, JavaScript lato server) | Filtri costruiti solo da valori tipizzati lato server (UUID, hash calcolati dal server, `str` validate da Pydantic `extra="forbid"`); nessun corpo di richiesta usato come filtro; nessun `$where`/`$function`; utente applicativo senza DDL | tutto `src/app`, `database/create_roles.py` | `test_mongo::test_operator_payloads_are_rejected_before_the_database`, `test_no_server_side_javascript_in_queries`, `test_app_user_is_dml_only_on_its_database`, `test_schema_user_is_not_cluster_admin` |
 | T14 | SSRF / egress non controllato | Nessun URL fornito dall'utente raggiunge httpx o boto3; endpoint Google da configurazione; `follow_redirects=False`; presign senza rete | `main.py::build_services`, `services/google.py`, `services/storage.py` | Revisione del codice; nessun test dedicato |
 | T15 | Download non autorizzato / path traversal | DPoP + entitlement attivo + 10/h per utente; chiave del bucket solo da enum `Product` lato server; URL prefirmato 300 s | `routers/downloads.py`, `deps.py::require_entitlement`, `services/storage.py` | `test_downloads::test_entitlement_matrix`, `test_entitlement_missing_or_other_product`, `test_catalog_is_server_side_only`, `test_ratelimit::test_downloads_per_user`; E2E 5 |
 | T16 | Binario manomesso | SHA-256 restituito dal server e mostrato con istruzioni `Get-FileHash`; audit di ogni URL emesso | `services/storage.py`, `portal/src/components/DownloadCard.tsx` | `test_download_allowed`; E2E 5. **Firma Authenticode non implementata** (O-8) |
@@ -194,7 +195,7 @@ Riferimenti ai test: backend `apps/api/tests/<file>::<test>`, portale `apps/port
 
 ## 5. Modello dati (MongoDB)
 
-Database dedicato (`NZT_MONGODB_DATABASE`, es. `nzt`) su un cluster MongoDB esterno condiviso con altri servizi. Convenzioni: collection e campi in **camelCase**, `_id` **UUID binario** (BSON subtype 4, `uuidRepresentation=standard`: gli ID non sono enumerabili e restano quelli generati da PostgreSQL), date UTC (precisione al millisecondo). Validatori, indici e TTL sono definiti in un solo punto, `apps/api/src/app/schema.py`, e applicati da `python -m app.schema` con un utente separato (§16.2).
+Database dedicato (`NZT_MONGODB_DATABASE`, es. `nzt`) su un cluster MongoDB esterno condiviso con altri servizi. Convenzioni: collection e campi in **camelCase**, `_id` **UUID binario** (BSON subtype 4, `uuidRepresentation=standard`: gli ID non sono enumerabili e restano quelli generati da PostgreSQL), date UTC (precisione al millisecondo). Validatori, indici e TTL sono definiti in un solo punto, `backend/src/app/schema.py`, e applicati da `python -m app.schema` con un utente separato (§16.2).
 
 | Collection | Campi | Indici | Note di sicurezza |
 | :--- | :--- | :--- | :--- |
@@ -222,7 +223,7 @@ Altri dettagli:
 
 ### 6.1 Hashing Argon2id — CONFORME
 
-`apps/api/src/app/security/passwords.py`
+`backend/src/app/security/passwords.py`
 
 | Parametro | Valore | Specifica |
 | :--- | :--- | :--- |
@@ -239,7 +240,7 @@ Altri dettagli:
 
 ### 6.2 Politica password — DEVIAZIONE (più restrittiva)
 
-Applicata in registrazione (`schemas.py::RegisterRequest`, `passwords.py::password_policy_errors`) e replicata identica nel portale (`apps/portal/src/lib/passwordPolicy.ts`, testata su 23 vettori generati eseguendo la funzione del backend):
+Applicata in registrazione (`schemas.py::RegisterRequest`, `passwords.py::password_policy_errors`) e replicata identica nel portale (`frontend/portal/src/lib/passwordPolicy.ts`, testata su 23 vettori generati eseguendo la funzione del backend):
 
 | Regola | Implementazione |
 | :--- | :--- |
@@ -272,7 +273,7 @@ Gli account locali nascono con `isVerified = false` e possono comunque effettuar
 
 ### 7.1 Lato client (portale)
 
-`apps/portal/src/auth/dpop.ts`, `keyStore.ts`, `keyManager.ts`, `apps/portal/src/api/http.ts`
+`frontend/portal/src/auth/dpop.ts`, `keyStore.ts`, `keyManager.ts`, `frontend/portal/src/api/http.ts`
 
 * **Chiave:** `crypto.subtle.generateKey({name:'ECDSA', namedCurve:'P-256'}, false, ['sign','verify'])`. La chiave privata è **non estraibile**; `toDpopKey` rifiuta una chiave privata estraibile.
 * **Persistenza (AGGIUNTA):** la `CryptoKeyPair` è salvata in IndexedDB (database `nzt-portal`, store `dpop-keys`, record `current`) per structured clone, che conserva `extractable=false`. Una chiave per profilo browser, condivisa tra le schede; creazione sotto il lock `nzt_dpop_key` (due schede non generano mai due chiavi). Se IndexedDB non è disponibile la chiave resta solo in memoria (nessuna sessione dopo il reload).
@@ -300,7 +301,7 @@ Formato esatto della prova (JWS compatto `base64url(header).base64url(payload).b
 
 ### 7.2 Lato server — validazione della prova
 
-`apps/api/src/app/security/dpop.py::DPoPValidator.validate`. Passi, nell'ordine del codice; ogni fallimento produce `401` (§7.4):
+`backend/src/app/security/dpop.py::DPoPValidator.validate`. Passi, nell'ordine del codice; ogni fallimento produce `401` (§7.4):
 
 | # | Controllo | Dettaglio |
 | :--- | :--- | :--- |
@@ -321,7 +322,7 @@ Formato esatto della prova (JWS compatto `base64url(header).base64url(payload).b
 
 ### 7.3 Accesso a risorse protette
 
-`apps/api/src/app/deps.py::get_current_user`, nell'ordine:
+`backend/src/app/deps.py::get_current_user`, nell'ordine:
 
 1. `Authorization` assente ⇒ `401 {"detail":"Not authenticated"}` + `WWW-Authenticate: DPoP algs="ES256"`.
 2. Schema diverso da `DPoP` (es. `Bearer`) ⇒ `401 invalid_token`.
@@ -347,7 +348,7 @@ La RFC 9449 consente `400` sugli endpoint di token: si è scelto `401` ovunque p
 
 ### 8.1 Access token
 
-`apps/api/src/app/security/tokens.py`
+`backend/src/app/security/tokens.py`
 
 | Proprietà | Valore |
 | :--- | :--- |
@@ -370,7 +371,7 @@ In produzione l'avvio fallisce se la chiave manca; in sviluppo/test viene genera
 | Scadenza | `NZT_REFRESH_TOKEN_TTL_SECONDS` default **604800 s** (7 giorni), ammesso 3600–604800; **scorrevole**: ogni rotazione emette un token valido altri 7 giorni |
 | Legame | La famiglia memorizza il `dpop_jkt` della chiave usata al login/registrazione/callback |
 
-Header esatti, generati esplicitamente da `apps/api/src/app/cookies.py` (nessun attributo `Domain` ⇒ cookie host-only su `api.nztsolutions.it`):
+Header esatti, generati esplicitamente da `backend/src/app/cookies.py` (nessun attributo `Domain` ⇒ cookie host-only su `api.nztsolutions.it`):
 
 ```http
 Set-Cookie: __Secure-refresh-token=<43 caratteri base64url>; HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth; Max-Age=604800
@@ -397,7 +398,7 @@ Cosa si perde rispetto a `__Host-`: un altro sottodominio di `nztsolutions.it` c
 
 ### 9.1 Rotazione atomica
 
-`apps/api/src/app/services/sessions.py::SessionService.rotate`. Il token presentato viene risolto **una volta** per richiesta (`refreshTokens._id = sha256(token)` → famiglia; dipendenza FastAPI in cache, condivisa da rate limit e handler). Poi:
+`backend/src/app/services/sessions.py::SessionService.rotate`. Il token presentato viene risolto **una volta** per richiesta (`refreshTokens._id = sha256(token)` → famiglia; dipendenza FastAPI in cache, condivisa da rate limit e handler). Poi:
 
 1. si scrive il documento `refreshTokens` del **nuovo** token (così ogni token che può essere consegnato è noto al rilevatore di riuso);
 2. un unico compare-and-swap atomico su un **solo documento** consuma il token:
@@ -465,7 +466,7 @@ Con RTR senza finestra di tolleranza (la specifica non ne prevede), due rotazion
 
 ### 10.2 Lato client — CONFORME + AGGIUNTE
 
-`apps/portal/src/auth/session.ts`, `src/lib/locks.ts`, `src/api/http.ts`
+`frontend/portal/src/auth/session.ts`, `src/lib/locks.ts`, `src/api/http.ts`
 
 | Meccanismo | Dettaglio |
 | :--- | :--- |
@@ -491,7 +492,7 @@ Evidenze: `session.test` "serializes refreshes across tabs" (4 schede × 2 round
 
 ## 11. Google OIDC, PKCE, state, nonce e collegamento account
 
-`apps/api/src/app/routers/google.py`, `services/google.py`, `security/sealed.py`; portale `src/components/GoogleButton.tsx`, `src/pages/GoogleCallbackPage.tsx`, `src/lib/oauthCallback.ts`.
+`backend/src/app/routers/google.py`, `services/google.py`, `security/sealed.py`; portale `src/components/GoogleButton.tsx`, `src/pages/GoogleCallbackPage.tsx`, `src/lib/oauthCallback.ts`.
 
 ### 11.1 Flusso
 
@@ -561,7 +562,7 @@ Corsa con un login a password concorrente (senza lock di riga): il login (`route
 
 ## 12. Distribuzione protetta del Launcher
 
-`apps/api/src/app/routers/downloads.py`, `deps.py::require_entitlement`, `services/storage.py`; portale `src/components/DownloadCard.tsx`.
+`backend/src/app/routers/downloads.py`, `deps.py::require_entitlement`, `services/storage.py`; portale `src/components/DownloadCard.tsx`.
 
 ```
 GET /api/v1/downloads/launcher   (Authorization: DPoP <AT> + DPoP con ath)
@@ -597,7 +598,7 @@ Lato portale il link è generato **solo su richiesta** ("Prepara il download"), 
 
 ### 13.1 Header dell'API — CONFORME + AGGIUNTA
 
-`apps/api/src/app/middleware.py::SecurityHeadersMiddleware` è un middleware ASGI puro e il più esterno: gli header sono presenti su **ogni** risposta, inclusi preflight CORS, 4xx, 413 e 500.
+`backend/src/app/middleware.py::SecurityHeadersMiddleware` è un middleware ASGI puro e il più esterno: gli header sono presenti su **ogni** risposta, inclusi preflight CORS, 4xx, 413 e 500.
 
 ```http
 Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
@@ -614,7 +615,7 @@ Cache-Control: no-store
 
 ### 13.2 CORS
 
-`apps/api/src/app/main.py`: `allow_origins = NZT_PORTAL_ORIGINS` (default solo `https://clienti.nztsolutions.it`), `allow_credentials=True`, metodi `GET, POST`, header `Authorization, Content-Type, DPoP`, unico header esposto `Retry-After` (`expose_headers=["Retry-After"]`), `max_age=600`. Un preflight da un origin non ammesso riceve `400` (`test_cors_preflight_portal_only`).
+`backend/src/app/main.py`: `allow_origins = NZT_PORTAL_ORIGINS` (default solo `https://clienti.nztsolutions.it`), `allow_credentials=True`, metodi `GET, POST`, header `Authorization, Content-Type, DPoP`, unico header esposto `Retry-After` (`expose_headers=["Retry-After"]`), `max_age=600`. Un preflight da un origin non ammesso riceve `400` (`test_cors_preflight_portal_only`).
 
 Ordine dei middleware (dall'esterno): `SecurityHeaders → CORS → ServerErrorGuard → BodySizeLimit → app`. Anche il `413` del limite body e il `500` generico passano quindi da CORS: per gli origin ammessi tutte le risposte d'errore (413, 429, 500, 503) sono leggibili dal portale, che mostra l'attesa reale indicata da `Retry-After` (es. "Riprova tra 25 secondi."; `test_cors_simple_request_exposes_only_retry_after`, `test_security_fixes::test_i6_cors_headers_on_413_429_500`, E2E 14b/14c).
 
@@ -632,7 +633,7 @@ Ordine dei middleware (dall'esterno): `SecurityHeaders → CORS → ServerErrorG
 
 ### 13.4 Header e CSP del portale — AGGIUNTA (più restrittiva della specifica)
 
-Fonte unica `apps/portal/csp.config.ts`; `vite preview` invia esattamente gli header di produzione; `deploy/_headers` e `deploy/Caddyfile` sono verificati uguali da `csp.test`.
+Fonte unica `frontend/portal/csp.config.ts`; `vite preview` invia esattamente gli header di produzione; `deploy/_headers` e `deploy/Caddyfile` sono verificati uguali da `csp.test`.
 
 ```http
 Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src https://api.nztsolutions.it; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types 'none'
@@ -657,7 +658,7 @@ Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
 
 ## 14. Rate limiting
 
-`apps/api/src/app/ratelimit.py`. Algoritmo *sliding window counter*: due bucket a finestra fissa (corrente e precedente, quest'ultimo pesato per la frazione ancora sovrapposta), controllo e incremento in un unico script Lua atomico che usa l'orologio del server Redis. Chiavi `rl:<regola>:<sha256(identificatore)[:32]>` (nessun dato personale in chiaro), scadenza `2 × finestra`. I valori sono quelli della specifica (più i due limiti Google, AGGIUNTA) e sono **costanti nel codice**, non configurabili da env.
+`backend/src/app/ratelimit.py`. Algoritmo *sliding window counter*: due bucket a finestra fissa (corrente e precedente, quest'ultimo pesato per la frazione ancora sovrapposta), controllo e incremento in un unico script Lua atomico che usa l'orologio del server Redis. Chiavi `rl:<regola>:<sha256(identificatore)[:32]>` (nessun dato personale in chiaro), scadenza `2 × finestra`. I valori sono quelli della specifica (più i due limiti Google, AGGIUNTA) e sono **costanti nel codice**, non configurabili da env.
 
 | Endpoint | Limite | Chiave | Momento della valutazione |
 | :--- | :--- | :--- | :--- |
@@ -680,7 +681,7 @@ Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
 
 ## 15. IP client e proxy fidati
 
-`apps/api/src/app/client_ip.py`. L'IP del client alimenta i limiti per IP e il campo `downloadLogs.ipAddress` (stringa normalizzata da `ipaddress`).
+`backend/src/app/client_ip.py`. L'IP del client alimenta i limiti per IP e il campo `downloadLogs.ipAddress` (stringa normalizzata da `ipaddress`).
 
 * Default (`NZT_TRUSTED_PROXY_CIDRS` vuoto): si usa il peer TCP; `X-Forwarded-For` è **ignorato**.
 * Con CIDR configurati: l'header è considerato solo se il peer TCP appartiene a un CIDR fidato; **tutte** le righe `X-Forwarded-For` sono unite nell'ordine ricevuto (RFC 9110 §5.3; prima si leggeva solo la prima riga, I2); si esaminano solo le **32 voci più a destra** (budget di parsing 8 KiB, sempre dalla destra), lette **da destra a sinistra** saltando gli hop fidati; il primo indirizzo non fidato è il client. Voci non interpretabili ⇒ si usa l'ultimo indirizzo fidato; 32 hop tutti fidati ⇒ il più a sinistra tra quelli esaminati. Le voci aggiunte dal client a sinistra sono quindi irrilevanti, qualunque sia il loro numero. **Correzione M1:** prima la catena era troncata con `[:32]`, cioè alle 32 voci più a **sinistra** (controllate dal client): con ≥ 32 voci falsificate l'IP reale usciva dalla finestra e il client sceglieva il proprio IP, aggirando tutti i limiti per IP e falsificando `download_logs.ip_address` (dal vivo: 8 registrazioni su 8 accettate invece di 3).
@@ -698,7 +699,7 @@ MongoDB **esterno** (es. Atlas) condiviso con altri servizi per avere un solo se
 
 ### 16.1 Utenti e ruoli — CONFORME
 
-`apps/api/scripts/db/create_roles.py` (idempotente, solo `pymongo`, password da variabili d'ambiente e mai sulla riga di comando; eseguito una volta con una connessione amministrativa). Su Atlas gli stessi ruoli e utenti si creano da **Database Access** (Custom Roles + Database Users), perché Atlas non accetta `createRole`/`createUser` da shell.
+`database/create_roles.py` (idempotente, solo `pymongo`, password da variabili d'ambiente e mai sulla riga di comando; eseguito una volta con una connessione amministrativa). Su Atlas gli stessi ruoli e utenti si creano da **Database Access** (Custom Roles + Database Users), perché Atlas non accetta `createRole`/`createUser` da shell.
 
 | Utente | Ruoli | Permessi |
 | :--- | :--- | :--- |
@@ -713,7 +714,7 @@ Verificato con il server reale (`test_mongo::test_app_user_is_dml_only_on_its_da
 
 ### 16.3 TLS e rete verso MongoDB — CONFORME
 
-`apps/api/src/app/config.py` + `db.py`. In produzione TLS è obbligatorio (`NZT_MONGODB_TLS`, default `true` in produzione) con verifica del certificato **e** del nome host (default di PyMongo, equivalente a `verify-full`); l'avvio fallisce se l'URI (dell'API o dello schema) contiene `tls=false`/`ssl=false`, `tlsInsecure`, `tlsAllowInvalidCertificates`, `tlsAllowInvalidHostnames`, `tlsDisableOCSPEndpointCheck`, `tlsDisableCertificateRevocationCheck` (anche con il separatore `;`, accettato dal driver) o se non contiene credenziali (`test_security_fixes::test_prod_requires_verified_tls_and_credentials`). La validazione dell'URI non esegue risoluzioni DNS (l'SRV di `mongodb+srv://` viene risolto solo dal driver). CA personalizzata: `NZT_MONGODB_TLS_CA_FILE`.
+`backend/src/app/config.py` + `db.py`. In produzione TLS è obbligatorio (`NZT_MONGODB_TLS`, default `true` in produzione) con verifica del certificato **e** del nome host (default di PyMongo, equivalente a `verify-full`); l'avvio fallisce se l'URI (dell'API o dello schema) contiene `tls=false`/`ssl=false`, `tlsInsecure`, `tlsAllowInvalidCertificates`, `tlsAllowInvalidHostnames`, `tlsDisableOCSPEndpointCheck`, `tlsDisableCertificateRevocationCheck` (anche con il separatore `;`, accettato dal driver) o se non contiene credenziali (`test_security_fixes::test_prod_requires_verified_tls_and_credentials`). La validazione dell'URI non esegue risoluzioni DNS (l'SRV di `mongodb+srv://` viene risolto solo dal driver). CA personalizzata: `NZT_MONGODB_TLS_CA_FILE`.
 
 Il cluster esterno **non** è sulla rete privata Railway: la regola "Zero Public DB" del documento generale (§1.1) va soddisfatta lato cluster con **IP Access List** limitata agli IP di uscita del servizio API (o private endpoint / peering se il piano lo consente), mai `0.0.0.0/0` (**NON VERIFICATO**, O-2).
 
@@ -737,7 +738,7 @@ Le operazioni sensibili alla concorrenza sono compare-and-swap su **un solo docu
 
 ### 17.1 Principi
 
-* Tutta la configurazione arriva da variabili d'ambiente con prefisso `NZT_` (`pydantic-settings`, `apps/api/src/app/config.py`); un file `.env` locale è ignorato da git; `apps/api/.env.example` è il modello senza valori reali.
+* Tutta la configurazione arriva da variabili d'ambiente con prefisso `NZT_` (`pydantic-settings`, `backend/src/app/config.py`); un file `.env` locale è ignorato da git; `backend/.env.example` è il modello senza valori reali.
 * I segreti sono `SecretStr`: mai presenti in `repr` o nei log (`test_secrets_not_in_repr`). Una variabile vuota significa "usa il default", mai "segreto vuoto".
 * **Guardie di produzione** (`NZT_ENVIRONMENT=production`, `test_production_requires_secrets`, `test_production_rejects_missing_signing_key_at_startup`, `test_security_fixes::test_prod_*`): l'avvio fallisce se mancano `ACCESS_TOKEN_PRIVATE_KEY_PEM`, `OAUTH_STATE_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`; se `LAUNCHER_SHA256` è il default di zeri; se `NZT_MONGODB_URI`, `NZT_MONGODB_DATABASE` o `NZT_REDIS_URL` non sono impostate **esplicitamente** (i default puntano ai servizi di test su `127.0.0.1`); se TLS verso MongoDB non è attivo o l'URI lo indebolisce o non ha credenziali (§16.3); se non è impostato `NZT_TRUSTED_PROXY_CIDRS` né l'opt-in `NZT_DIRECT_CLIENT_CONNECTIONS=true` (o se sono impostati entrambi); se API, portale, `STORAGE_PUBLIC_ORIGIN` o `NZT_STORAGE_ENDPOINT_URL` non sono https.
 * Perché un opt-in separato per "nessun proxy": una variabile vuota significa sempre "usa il default" (`env_ignore_empty`), quindi `NZT_TRUSTED_PROXY_CIDRS=` non può esprimere una scelta consapevole; dimenticare i CIDR dietro un proxy farebbe condividere a tutti gli utenti l'IP del proxy (limiti per IP globali, audit inutile).
@@ -832,7 +833,7 @@ Mai registrati: password, token, cookie, body delle richieste, URL prefirmati (i
 
 **Igiene della chiave:** una chiave creata per un login/registrazione/callback fallito viene eliminata; una chiave il cui refresh riceve `401` viene eliminata (E2E 10f, 11c, 12g); al logout la chiave viene sempre eliminata, così una nuova sessione usa una nuova chiave (sessioni non correlabili per `jkt`).
 
-**Invarianti imposte dal lint** (`apps/portal/eslint.config.js`): `no-console`, `no-eval`, `no-implied-eval`, `no-new-func`, `no-script-url`; divieto di `localStorage`, `sessionStorage`, `document.cookie`, `document.write`, `dangerouslySetInnerHTML`, assegnazioni a `innerHTML`/`outerHTML`.
+**Invarianti imposte dal lint** (`frontend/portal/eslint.config.js`): `no-console`, `no-eval`, `no-implied-eval`, `no-new-func`, `no-script-url`; divieto di `localStorage`, `sessionStorage`, `document.cookie`, `document.write`, `dangerouslySetInnerHTML`, assegnazioni a `innerHTML`/`outerHTML`.
 
 **Client HTTP** (`src/api/http.ts`): solo path `/api/...` verso `VITE_API_BASE_URL`; `credentials: 'omit'` salvo endpoint `/api/v1/auth/*`; `cache: 'no-store'`, `redirect: 'error'`, `referrerPolicy: 'no-referrer'`, timeout 15 s. Il `detail` del backend serve solo a classificare l'errore e non viene mai mostrato (`errors.test`, E2E 11b); un `401 Invalid DPoP proof` suggerisce di controllare l'orologio del dispositivo (la finestra `iat` è ±60 s).
 
@@ -845,18 +846,18 @@ Mai registrati: password, token, cookie, body delle richieste, URL prefirmati (i
 | Aspetto | Stato |
 | :--- | :--- |
 | Lockfile JS | `pnpm-lock.yaml` (unico per il workspace); installazione con `pnpm install --frozen-lockfile` |
-| Lockfile Python | `apps/api/uv.lock`; installazione con `uv sync --frozen`; Python fissato a 3.12 (`.python-version`) |
+| Lockfile Python | `backend/uv.lock`; installazione con `uv sync --frozen`; Python fissato a 3.12 (`.python-version`) |
 | Script di installazione | `pnpm.onlyBuiltDependencies` consente build script solo a `esbuild` e `sharp` |
 | Dipendenze runtime del portale | `react`, `react-dom`, `@nzt/ui` (clsx, tailwind-merge, class-variance-authority), font `@fontsource`; nessun router, form library o script di terze parti |
 | Dipendenze API | FastAPI, uvicorn, PyMongo, pydantic(-settings), email-validator, argon2-cffi, PyJWT[crypto], cryptography, redis, httpx, boto3 (rimossi SQLAlchemy, asyncpg, Alembic, greenlet, Mako, MarkupSafe) |
 | CI / audit automatici | **Assenti** nel repository |
-| Audit eseguito (revisione indipendente + correzioni) | `pip-audit` su `uv.lock`: nessuna vulnerabilità. `pnpm audit`: prima 26 advisory (3 critical, 8 high, 11 moderate, 4 low); dopo l'aggiornamento di `vitest` a 4.1.12 (solo strumento di test del portale: rimossi `tinypool` e `@vitest/mocker` vulnerabili; `vite` resta 6.4.5, nessun'altra versione cambiata) restano **21** (1 critical, 8 high, 8 moderate, 4 low), **tutte in `apps/landing`** (Astro, sharp, esbuild): aggiornamento della landing da pianificare (rilevante anche per §8.3) |
+| Audit eseguito (revisione indipendente + correzioni) | `pip-audit` su `uv.lock`: nessuna vulnerabilità. `pnpm audit`: prima 26 advisory (3 critical, 8 high, 11 moderate, 4 low); dopo l'aggiornamento di `vitest` a 4.1.12 (solo strumento di test del portale: rimossi `tinypool` e `@vitest/mocker` vulnerabili; `vite` resta 6.4.5, nessun'altra versione cambiata) restano **21** (1 critical, 8 high, 8 moderate, 4 low), **tutte in `frontend/landing`** (Astro, sharp, esbuild): aggiornamento della landing da pianificare (rilevante anche per §8.3) |
 
 Comandi di audit raccomandati (non ancora automatizzati):
 
 ```bash
 pnpm audit --prod                                   # dipendenze JS di produzione
-cd apps/api && uv export --frozen --no-dev --format requirements-txt > /tmp/req.txt \
+cd backend && uv export --frozen --no-dev --format requirements-txt > /tmp/req.txt \
   && uvx pip-audit -r /tmp/req.txt                  # dipendenze Python
 ```
 
@@ -902,7 +903,7 @@ Raccomandato: job CI che esegue test, lint, i due audit e un aggiornamento contr
 
 ## 22. Evidenze di verifica
 
-### 22.1 Backend (`apps/api`) — contro MongoDB 8 e Redis 7 reali (nessun mock per DB e Redis)
+### 22.1 Backend (`backend`) — contro MongoDB 8 e Redis 7 reali (nessun mock per DB e Redis)
 
 Migrazione a MongoDB (2026-11-18), eseguita contro `mongod` 8.0.4 in replica set a nodo singolo con autenticazione e keyfile (`scripts/test-services.sh`).
 
@@ -913,7 +914,7 @@ Migrazione a MongoDB (2026-11-18), eseguita contro `mongod` 8.0.4 in replica set
 | `ruff check` / `ruff format --check` | Nessun problema |
 | `mypy` strict su `src/app` | Nessun errore (31 file) |
 | `python -m app.schema` / `--check` | Idempotente; `nzt_test is up to date`; con l'utente applicativo: rifiuto esplicito (privilegio minimo) |
-| Migrazione dati reale PostgreSQL 16 → MongoDB (`scripts/migrate_postgres_to_mongo.py`) | Dry run, rifiuto senza TLS di default, due esecuzioni idempotenti; poi login cliente + download (entitlement migrato), login admin e `/healthz` `200` sull'API nuova |
+| Migrazione dati reale PostgreSQL 16 → MongoDB (`database/migrate_postgres_to_mongo.py`) | Dry run, rifiuto senza TLS di default, due esecuzioni idempotenti; poi login cliente + download (entitlement migrato), login admin e `/healthz` `200` sull'API nuova |
 | `docker compose config` (stack completo e di test) | Validi; gli stack compose **non** sono stati avviati (nessun daemon Docker) |
 
 | File di test | Test | Ambito |
@@ -934,7 +935,7 @@ Migrazione a MongoDB (2026-11-18), eseguita contro `mongod` 8.0.4 in replica set
 
 Misure dal vivo (uvicorn, `NZT_TRUSTED_PROXY_CIDRS=127.0.0.1/32`, 100 login fasulli in parallelo da 100 IP distinti, `NZT_ARGON2_MAX_CONCURRENCY=2`): prima della correzione un login legittimo impiegava 1,5–6,3 s (coda illimitata, login fasulli fino a 6,5 s); dopo, il login legittimo durante il picco riceve in 0,2–0,8 s un `503` con `Retry-After: 1` e, ripetuto dopo l'attesa indicata, riesce in 1,4–1,9 s totali; i login fasulli eccedenti sono scartati in ≤ 1,6 s. Registrazioni con 32 hop `X-Forwarded-For` falsificati: prima 8/8 accettate, dopo `201, 201, 201, 429…`. Prova DPoP con `iat: NaN`: prima `500`, dopo `401`.
 
-### 22.2 Portale (`apps/portal`) — Vitest con WebCrypto reale
+### 22.2 Portale (`frontend/portal`) — Vitest con WebCrypto reale
 
 **110 test in 12 file** (Vitest 4.1.12), tutti superati: errors 24, passwordPolicy 30, session 14, contrast 8, dpop 7, csp 7, keyManager 4, thumbprint 4, tokenStore 4, oauthCallback 3, safeUrls 3, locks 2. ESLint, `tsc` strict e Prettier senza problemi su portal, ui e landing.
 
@@ -950,7 +951,7 @@ Ambiente E2E: API `http://localhost:18080`, portale `http://localhost:4173`, IdP
 
 ### 22.4 Landing
 
-Build della landing prima e dopo l'estrazione di `packages/ui`: **25 file su 25 identici** (sha256 dei file di `dist/`, esclusi `sitemap-0.xml` e `sitemap-index.xml`, che differiscono solo per `<lastmod>`). Stesso risultato prima e dopo le correzioni della revisione (inclusa la modifica del lockfile per `vitest`).
+Build della landing prima e dopo l'estrazione di `frontend/ui`: **25 file su 25 identici** (sha256 dei file di `dist/`, esclusi `sitemap-0.xml` e `sitemap-index.xml`, che differiscono solo per `<lastmod>`). Stesso risultato prima e dopo le correzioni della revisione (inclusa la modifica del lockfile per `vitest`).
 
 ### 22.5 Non verificato
 
@@ -985,7 +986,7 @@ Ordinati per priorità. "O-…" sono i punti aperti delle relazioni di implement
 | R-19 | — | ~~Guardie di produzione incomplete~~ **Risolto**: DSN, Redis URL, proxy fidati (o opt-in), storage https e `verify-full` sono ora obbligatori | — | — |
 | R-21 | Bassa | **Replay di un refresh token storico** (revisione **L1**, non corretta: decisione utente) | Un valore già usato, ripresentato con qualunque chiave entro la sua validità (7 giorni; poi il TTL lo elimina), revoca tutte le sessioni della vittima (§9.2) | Valutare revoca della sola famiglia + alert |
 | R-22 | Info | Enumerazione via registrazione (revisione **I1**, non corretta: richiede verifica email) | `201` vs `400 Registration failed` rivela se un'email esiste (3/h per IP) | Con la verifica email: risposta sempre `202` e invio di una mail |
-| R-23 | Info | Privilegi del ruolo applicativo (revisione **I4**, non corretta: decisione utente) | `nzt_app` può `update`/`remove` su `downloadLogs`: l'audit non è append-only per l'applicazione | Nel ruolo `nztApp` limitare `downloadLogs` alle azioni `find` e `insert` (`scripts/db/create_roles.py` / Atlas) |
+| R-23 | Info | Privilegi del ruolo applicativo (revisione **I4**, non corretta: decisione utente) | `nzt_app` può `update`/`remove` su `downloadLogs`: l'audit non è append-only per l'applicazione | Nel ruolo `nztApp` limitare `downloadLogs` alle azioni `find` e `insert` (`database/create_roles.py` / Atlas) |
 | R-20 | Bassa | Branding del pulsante Google monocromatico (O-P7) | Possibile non conformità alle linee guida Google | Conferma utente |
 
 Gli endpoint e i flussi non sono stati validati con Google, R2 e Railway reali (§22.5).
@@ -998,7 +999,7 @@ Gli endpoint e i flussi non sono stati validati con Google, R2 e Railway reali (
 
 ```bash
 # schema MongoDB: validatori + indici (passo separato, utente nzt_migrator; idempotente)
-cd apps/api && NZT_MONGODB_MIGRATIONS_URI=... NZT_MONGODB_DATABASE=nzt uv run python -m app.schema
+cd backend && NZT_MONGODB_MIGRATIONS_URI=... NZT_MONGODB_DATABASE=nzt uv run python -m app.schema
 # (in CI: ... python -m app.schema --check  => exit 1 se il database differisce dal codice)
 
 # processo applicativo (utente nzt_app)
@@ -1013,9 +1014,9 @@ uvicorn app.main:create_app --factory --no-proxy-headers --host 0.0.0.0 --port $
    * **Atlas** — *Database Access → Custom Roles*: ruolo `nztApp` con le azioni `find`, `insert`, `update`, `remove` su ciascuna collection `nzt.users`, `nzt.refreshTokenFamilies`, `nzt.refreshTokens`, `nzt.emailVerificationTokens`, `nzt.downloadLogs` (non sull'intero database). *Database Users*: `nzt_app` con il solo ruolo `nztApp`; `nzt_migrator` con `dbAdmin@nzt` + `readWrite@nzt`. Password generate, autenticazione SCRAM.
    * **MongoDB autogestito** — una sola volta, con un utente amministratore:
      ```bash
-     cd apps/api && NZT_MONGODB_ROOT_URI='<uri admin>' NZT_DB_NAME=nzt \
+     cd backend && NZT_MONGODB_ROOT_URI='<uri admin>' NZT_DB_NAME=nzt \
        NZT_MIGRATOR_PASSWORD='<segreto>' NZT_APP_PASSWORD='<segreto>' \
-       uv run python scripts/db/create_roles.py
+       uv run python database/create_roles.py
      ```
 2. Rete: *Network Access / IP Access List* limitata agli IP di uscita del servizio API (o private endpoint); mai `0.0.0.0/0`.
 3. `python -m app.schema` con `NZT_MONGODB_MIGRATIONS_URI` (utente `nzt_migrator`).
@@ -1024,12 +1025,12 @@ uvicorn app.main:create_app --factory --no-proxy-headers --host 0.0.0.0 --port $
 **Migrazione dei dati da PostgreSQL (una tantum).** Con PostgreSQL ancora raggiungibile:
 
 ```bash
-cd apps/api
+cd backend
 export NZT_PG_SOURCE_DSN='postgresql://nzt_app:...@<host>:5432/nzt'   # basta un ruolo in sola lettura
 export NZT_MONGODB_MIGRATIONS_URI='mongodb+srv://nzt_migrator:...@<cluster>/?authSource=admin'
 export NZT_MONGODB_DATABASE=nzt
-uv run --with asyncpg python scripts/migrate_postgres_to_mongo.py --dry-run   # conteggi, nessuna scrittura
-uv run --with asyncpg python scripts/migrate_postgres_to_mongo.py            # applica lo schema, copia, verifica
+uv run --with asyncpg python database/migrate_postgres_to_mongo.py --dry-run   # conteggi, nessuna scrittura
+uv run --with asyncpg python database/migrate_postgres_to_mongo.py            # applica lo schema, copia, verifica
 ```
 
 Snapshot coerente (una transazione PostgreSQL in sola lettura), stessi UUID, idempotente (rieseguibile). Copia utenti (con identità ed entitlement), token di verifica pendenti e audit dei download; **non** copia le sessioni: ogni utente rifà il login una volta. Dopo il passaggio eliminare lo script, `tests/test_pg_migration.py` e il servizio PostgreSQL.
@@ -1124,28 +1125,28 @@ Tutte le risposte d'errore hanno body `{"detail": …}` e, per gli origin del po
 
 | File | Responsabilità |
 | :--- | :--- |
-| `apps/api/src/app/config.py` | Configurazione, segreti `SecretStr`, guardie di produzione |
-| `apps/api/src/app/security/dpop.py` | Validazione prove DPoP, anti-replay |
-| `apps/api/src/app/security/tokens.py` | Access token EdDSA, generazione e hash dei refresh token |
-| `apps/api/src/app/security/passwords.py` | Argon2id, semaforo, coda limitata (`503`), dummy verify, politica password |
-| `apps/api/src/app/security/sealed.py` | AES-256-GCM del cookie di state OAuth |
-| `apps/api/src/app/security/jose_utils.py` | base64url stretto, thumbprint RFC 7638 |
-| `apps/api/src/app/services/sessions.py` | Famiglie, RTR atomica, reuse detection, logout, marker |
-| `apps/api/src/app/services/google.py` | OIDC: URL di autorizzazione, scambio codice, verifica ID token, cache JWKS |
-| `apps/api/src/app/services/storage.py` | Catalogo prodotti, presign SigV4 |
-| `apps/api/src/app/deps.py` | Autenticazione delle risorse (una lettura dell'utente per richiesta), ruolo admin, `require_entitlement` |
-| `apps/api/src/app/db.py` | Client MongoDB (TLS, `w: majority`, timeout), nomi delle collection, filtro dell'identità, logger `pymongo` a WARNING |
-| `apps/api/src/app/schema.py` | Validatori `$jsonSchema`, indici, TTL, `python -m app.schema [--check]` |
-| `apps/api/src/app/routers/*.py` | Endpoint e ordine dei controlli |
-| `apps/api/src/app/cookies.py` | Rendering esatto dei cookie |
-| `apps/api/src/app/client_ip.py` | IP client e proxy fidati |
-| `apps/api/src/app/ratelimit.py` | Sliding window Redis, fail-closed |
-| `apps/api/src/app/middleware.py` | Header di sicurezza, guardia errori (dentro e fuori CORS), limite body |
-| `apps/api/src/app/errors.py` | Handler 422/429/503, `WWW-Authenticate` |
-| `apps/api/src/app/main.py` | Factory, CORS, ordine dei middleware |
-| `apps/api/scripts/db/create_roles.py` | Utenti MongoDB a privilegio minimo (ruolo `nztApp` per collection) |
-| `apps/portal/src/auth/*` | Chiave DPoP, prove, token in memoria, orchestrazione sessione |
-| `apps/portal/src/api/http.ts` | Client API, DPoP, `keepalive`, nessun log |
-| `apps/portal/src/lib/{locks,safeUrls,oauthCallback,passwordPolicy}.ts` | Web Locks, validazione URL, pulizia callback, politica password |
-| `apps/portal/csp.config.ts`, `apps/portal/deploy/*` | CSP e header del portale |
-| `apps/portal/eslint.config.js` | Invarianti di sicurezza imposte dal lint |
+| `backend/src/app/config.py` | Configurazione, segreti `SecretStr`, guardie di produzione |
+| `backend/src/app/security/dpop.py` | Validazione prove DPoP, anti-replay |
+| `backend/src/app/security/tokens.py` | Access token EdDSA, generazione e hash dei refresh token |
+| `backend/src/app/security/passwords.py` | Argon2id, semaforo, coda limitata (`503`), dummy verify, politica password |
+| `backend/src/app/security/sealed.py` | AES-256-GCM del cookie di state OAuth |
+| `backend/src/app/security/jose_utils.py` | base64url stretto, thumbprint RFC 7638 |
+| `backend/src/app/services/sessions.py` | Famiglie, RTR atomica, reuse detection, logout, marker |
+| `backend/src/app/services/google.py` | OIDC: URL di autorizzazione, scambio codice, verifica ID token, cache JWKS |
+| `backend/src/app/services/storage.py` | Catalogo prodotti, presign SigV4 |
+| `backend/src/app/deps.py` | Autenticazione delle risorse (una lettura dell'utente per richiesta), ruolo admin, `require_entitlement` |
+| `backend/src/app/db.py` | Client MongoDB (TLS, `w: majority`, timeout), nomi delle collection, filtro dell'identità, logger `pymongo` a WARNING |
+| `backend/src/app/schema.py` | Validatori `$jsonSchema`, indici, TTL, `python -m app.schema [--check]` |
+| `backend/src/app/routers/*.py` | Endpoint e ordine dei controlli |
+| `backend/src/app/cookies.py` | Rendering esatto dei cookie |
+| `backend/src/app/client_ip.py` | IP client e proxy fidati |
+| `backend/src/app/ratelimit.py` | Sliding window Redis, fail-closed |
+| `backend/src/app/middleware.py` | Header di sicurezza, guardia errori (dentro e fuori CORS), limite body |
+| `backend/src/app/errors.py` | Handler 422/429/503, `WWW-Authenticate` |
+| `backend/src/app/main.py` | Factory, CORS, ordine dei middleware |
+| `database/create_roles.py` | Utenti MongoDB a privilegio minimo (ruolo `nztApp` per collection) |
+| `frontend/portal/src/auth/*` | Chiave DPoP, prove, token in memoria, orchestrazione sessione |
+| `frontend/portal/src/api/http.ts` | Client API, DPoP, `keepalive`, nessun log |
+| `frontend/portal/src/lib/{locks,safeUrls,oauthCallback,passwordPolicy}.ts` | Web Locks, validazione URL, pulizia callback, politica password |
+| `frontend/portal/csp.config.ts`, `frontend/portal/deploy/*` | CSP e header del portale |
+| `frontend/portal/eslint.config.js` | Invarianti di sicurezza imposte dal lint |

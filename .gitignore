@@ -26,3 +26,8 @@ coverage/
 
 # jetbrains setting folder
 .idea/
+
+# Python (backend/ e database/)
+__pycache__/
+*.py[cod]
+.venv/

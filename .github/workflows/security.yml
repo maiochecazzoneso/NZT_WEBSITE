@@ -66,9 +66,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Configurazione del Dockerfile
-        run: docker run --rm -v "$PWD:/repo:ro" "$TRIVY_IMAGE" config --exit-code 1 /repo/Dockerfile
+        run: docker run --rm -v "$PWD:/repo:ro" "$TRIVY_IMAGE" config --exit-code 1 /repo/frontend/landing/Dockerfile
       - name: Build dell'immagine
-        run: docker build --build-arg PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA -t nzt-web:ci .
+        run: docker build -f frontend/landing/Dockerfile --build-arg PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA -t nzt-web:ci .
       - name: Vulnerabilità dell'immagine (alte e critiche)
         run: >
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE"

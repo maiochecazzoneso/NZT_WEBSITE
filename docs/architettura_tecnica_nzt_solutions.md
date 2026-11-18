@@ -13,7 +13,7 @@ L'architettura di **NZT Solutions** è progettata attorno a quattro pilastri non
 1. **Zero-JS di Default (HTML First):** L'intera struttura semantica, i testi commerciali, le intestazioni (`h1-h6`) e le sezioni statiche vengono compilati in HTML/CSS puro in fase di build. I crawler di Google ricevono il contenuto completo istantaneamente senza dover eseguire JavaScript.
 2. **Idratazione Selettiva ad Isole (Islands Architecture):** Il codice JavaScript (React, Motion, 3D) viene scaricato ed eseguito **solo** per i singoli componenti interattivi e **solo** quando l'utente scorre fino a renderli visibili (`client:visible`) o quando il thread principale del browser è libero (`client:idle`).
 3. **Mockup UI nel DOM invece di Video/GIF:** Come su *pnote.it*, le dimostrazioni dei servizi e dei software di NZT Solutions non useranno file video pesanti, ma componenti HTML/CSS/React animati che simulano dashboard, notifiche, flussi di lavoro e grafici interattivi. Questo garantisce nitidezza vettoriale su ogni schermo, peso inferiore a pochi kilobyte e testo indicizzabile.
-4. **Design System Condivisibile (Future-Proof):** Tutti i componenti atomici dell'interfaccia (bottoni, badge, input, card, modali, token di colore) sono scritti in **React + Tailwind CSS** e isolati in una cartella dedicata (`src/components/ui`). Quando nascerà l'Area Clienti (`clienti.nztsolutions.it`), l'intero sistema grafico potrà essere riutilizzato al 100% senza riscrivere una riga di codice.
+4. **Design System Condivisibile (Future-Proof):** Tutti i componenti atomici dell'interfaccia (bottoni, badge, input, card, modali, token di colore) sono scritti in **React + Tailwind CSS** e isolati in una cartella dedicata (`frontend/landing/src/components/ui`). Quando nascerà l'Area Clienti (`clienti.nztsolutions.it`), l'intero sistema grafico potrà essere riutilizzato al 100% senza riscrivere una riga di codice.
 
 ### Target Prestazionali (Performance Budget)
 * **Google PageSpeed Insights (Mobile & Desktop):** $98 - 100 / 100$
@@ -110,6 +110,8 @@ Questo è il manifesto completo delle dipendenze con cui inizializzare il reposi
 ---
 
 ## 4. Struttura delle Cartelle (File Tree Completo)
+
+> **Posizione nel repository:** il sito vive in `frontend/landing/` (il repository è un monorepo: `frontend/` sito, portale, dashboard e design system; `backend/` API; `database/` strumenti MongoDB; vedi il `README.md` della radice). L'albero qui sotto è relativo a `frontend/landing/`.
 
 La struttura è organizzata per separare nettamente:
 1. **`components/ui/`**: Il Design System atomico in React (pronto per essere condiviso con la futura Area Clienti).
@@ -224,7 +226,7 @@ Qualsiasi isola React può leggere o aggiornare questo valore in tempo reale con
 
 ## 6. Architettura del Motore di Animazione (GSAP + Lenis + Controllo Utente)
 
-### 6.1 Inizializzazione Centrale (`src/lib/gsap-init.ts`)
+### 6.1 Inizializzazione Centrale (`frontend/landing/src/lib/gsap-init.ts`)
 Tutte le animazioni di scorrimento sono centralizzate, rispettano le impostazioni di accessibilità del sistema operativo (`prefers-reduced-motion`) e possono essere messe in pausa dall'utente (proprio come il controllo presente su *pnote.it*):
 
 ```typescript
@@ -304,7 +306,7 @@ Per garantire il massimo posizionamento organico fin dal lancio, il componente `
 * **`Organization` & `ProfessionalService`:** Nome ufficiale (*NZT Solutions*), logo, URL, contatti, area geografica servita e profili social.
 * **`WebSite`:** Struttura principale del dominio `https://nztsolutions.it`.
 * **`Service` (ItemList):** Elenco strutturato dei servizi offerti nella landing page (comprensibile anche dai motori di ricerca AI e da Google SGE).
-* **`FAQPage`:** Generato automaticamente a partire dal file `src/content/faqs.ts` per ottenere spazio extra nei risultati di ricerca.
+* **`FAQPage`:** Generato automaticamente a partire dal file `frontend/landing/src/content/faqs.ts` per ottenere spazio extra nei risultati di ricerca.
 
 ### Checklist SEO Pre-Renderizzata
 * **Gerarchia Heading rigorosa:** Un solo `<h1>` nella Hero Section con la keyword principale di NZT Solutions; `<h2>` per ogni macro-sezione; `<h3>` per le singole card della Bento Grid.
@@ -315,7 +317,7 @@ Per garantire il massimo posizionamento organico fin dal lancio, il componente `
 
 ## 8. File di Configurazione Chiave (Boilerplate di Partenza)
 
-### 8.1 `astro.config.mjs`
+### 8.1 `frontend/landing/astro.config.mjs`
 ```javascript
 import { defineConfig } from 'astro/config';
 import react from '@astrojs/react';
@@ -346,7 +348,7 @@ export default defineConfig({
 });
 ```
 
-### 8.2 `tsconfig.json`
+### 8.2 `frontend/landing/tsconfig.json`
 ```json
 {
   "extends": "astro/tsconfigs/strict",
@@ -364,7 +366,7 @@ export default defineConfig({
 }
 ```
 
-### 8.3 `src/styles/global.css` (Design Tokens & Tema)
+### 8.3 `frontend/landing/src/styles/global.css` (Design Tokens & Tema)
 ```css
 @import "tailwindcss";
 
@@ -404,13 +406,13 @@ Questa architettura è stata progettata affinché l'aggiunta della futura Area C
 
 ### Fase 1 (Oggi): Repository Singolo per la Landing Page
 * Il sito vive su `nztsolutions.it` ed è distribuito gratuitamente su Edge CDN (Cloudflare Pages o Vercel).
-* Tutti i bottoni, badge, input e card vengono creati dentro `src/components/ui/` usando solo React e Tailwind (senza dipendenze specifiche di Astro).
+* Tutti i bottoni, badge, input e card vengono creati dentro `frontend/landing/src/components/ui/` usando solo React e Tailwind (senza dipendenze specifiche di Astro).
 
 ### Fase 2 (Futuro): Creazione di `clienti.nztsolutions.it`
 Quando deciderai di aprire l'Area Clienti, avrai due opzioni immediate:
 1. **Condivisione immediata del Design System (Monorepo `pnpm workspaces`):**
-   * Sposti la cartella `src/components/ui` in un pacchetto condiviso `packages/ui`.
-   * Sia la landing (`apps/landing` in Astro) sia il portale clienti (`apps/portal` in Next.js o React Vite) importano esattamente gli stessi componenti (`import { Button, Card } from '@nzt/ui'`).
+   * Sposti la cartella `frontend/landing/src/components/ui` in un pacchetto condiviso `frontend/ui`.
+   * Sia la landing (`frontend/landing` in Astro) sia il portale clienti (`frontend/portal` in Next.js o React Vite) importano esattamente gli stessi componenti (`import { Button, Card } from '@nzt/ui'`).
 2. **Configurazione DNS (Zero costi di dominio):**
    * Nel pannello DNS di `nztsolutions.it`, mantieni il record principale `@` puntato alla CDN della landing page.
    * Aggiungi un singolo record `CNAME` per `clienti` che punta all'applicazione dell'Area Clienti.
@@ -424,11 +426,11 @@ Quando deciderai di aprire l'Area Clienti, avrai due opzioni immediate:
    * Eseguire `pnpm create astro@latest nzt-solutions-web` (template vuoto, TypeScript `strict`).
    * Installare le dipendenze del `package.json` definito nella Sezione 3.
 2. **Step 2 — Setup Design System & Layout Base:**
-   * Configurare i font locali, la palette colori in `global.css`, `MainLayout.astro`, `BaseHead.astro` e i componenti base in `src/components/ui/` (`Button.tsx`, `Card.tsx`, `Badge.tsx`).
+   * Configurare i font locali, la palette colori in `global.css`, `MainLayout.astro`, `BaseHead.astro` e i componenti base in `frontend/landing/src/components/ui/` (`Button.tsx`, `Card.tsx`, `Badge.tsx`).
 3. **Step 3 — Sviluppo Struttura Statica SEO (Scheletro HTML):**
    * Costruire tutte le sezioni `.astro` (`Navbar`, `HeroSection`, `ServicesSection`, `MethodSection`, `FaqSection`, `Footer`) con i testi definitivi e i tag semantici corretti. Verificare il punteggio Lighthouse 100/100.
 4. **Step 4 — Sviluppo Mockup Interattivi (Stile *pnote.it*):**
-   * Creare le isole React in `src/components/interactive/`: il mockup animato della Hero (`HeroInteractiveMockup.tsx`) e la Bento Grid dei servizi con micro-interazioni in *Motion*.
+   * Creare le isole React in `frontend/landing/src/components/interactive/`: il mockup animato della Hero (`HeroInteractiveMockup.tsx`) e la Bento Grid dei servizi con micro-interazioni in *Motion*.
 5. **Step 5 — Integrazione GSAP + Lenis & Controllo Animazioni:**
    * Collegare `gsap-init.ts` per le rivelazioni allo scroll e inserire il pulsante *"Pausa/Attiva Animazioni"* per accessibilità e performance.
 6. **Step 6 — Form di Contatto, SEO Finale e Deploy:**

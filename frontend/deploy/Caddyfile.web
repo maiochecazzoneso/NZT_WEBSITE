@@ -1,0 +1,41 @@
+# Portale clienti (host di default) + dashboard admin (host ADMIN_HOST) nello stesso container.
+# Variabili a runtime: PORT (default 80), API_ORIGIN (origin dell'API = VITE_API_BASE_URL usato in build),
+# ADMIN_HOST (solo hostname, es. admin-test.up.railway.app). Gli header sono quelli di frontend/*/deploy/Caddyfile.container.
+:{$PORT:80} {
+	encode zstd gzip
+
+	# Controllo di salute della piattaforma (il railway.json della radice impone /healthz)
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	@admin host {$ADMIN_HOST:admin.localhost}
+
+	handle @admin {
+		root * /srv/admin
+		header {
+			Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src {$API_ORIGIN:http://localhost:8000}; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types 'none'"
+			X-Robots-Tag "noindex, nofollow, noarchive"
+			Referrer-Policy "no-referrer"
+			X-Content-Type-Options "nosniff"
+			X-Frame-Options "DENY"
+			-Server
+		}
+		try_files {path} /index.html
+		file_server
+	}
+
+	handle {
+		root * /srv/portal
+		header {
+			Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src {$API_ORIGIN:http://localhost:8000}; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types 'none'"
+			X-Robots-Tag "noindex, nofollow, noarchive"
+			Referrer-Policy "no-referrer"
+			X-Content-Type-Options "nosniff"
+			X-Frame-Options "DENY"
+			-Server
+		}
+		try_files {path} /index.html
+		file_server
+	}
+}

@@ -13,9 +13,9 @@ updates:
         dependency-type: development
         update-types: [minor, patch]
 
-  # Immagini base del Dockerfile (fissate per digest)
+  # Immagini base del Dockerfile del sito (fissate per digest)
   - package-ecosystem: docker
-    directory: /
+    directory: /frontend/landing
     schedule:
       interval: weekly
 

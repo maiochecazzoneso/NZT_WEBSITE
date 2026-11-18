@@ -1,39 +1,64 @@
 # NZT_WEBSITE
-CREAZIONE DEL SITO WEB DI NZT SOLUTIONS
+
+Sito web, Area Clienti e API di NZT Solutions.
+
+## Struttura
+
+```text
+NZT_WEBSITE/
+├── frontend/               tutto ciò che gira nel browser (workspace pnpm)
+│   ├── landing/            sito pubblico nztsolutions.it (Astro + server Node di produzione)
+│   ├── portal/             Area Clienti (React + Vite)
+│   ├── admin/              dashboard amministratore (React + Vite, login separato)
+│   ├── ui/                 design system condiviso @nzt/ui
+│   └── deploy/             container Caddy unico per portale + dashboard (Railway "web")
+├── backend/                API dell'Area Clienti (FastAPI, Python 3.12, uv)
+├── database/               strumenti MongoDB: utenti a privilegio minimo, migrazione dati
+├── docs/                   architettura tecnica, grafica e di sicurezza; screenshots/
+├── docker-compose.yml      stack completo in locale
+└── package.json            radice del workspace pnpm (comandi rapidi, Prettier)
+```
+
+Ogni cartella ha il proprio `Dockerfile` e la propria configurazione. Lo schema MongoDB (validatori e
+indici) è definito nel codice dell'API, in `backend/src/app/schema.py`; vedi `database/README.md`.
 
 ## Documentazione
 
-I documenti di architettura sono in `docs/`:
-
 | Documento | Contenuto |
 | --- | --- |
-| `docs/architettura_tecnica_nzt_solutions.md` | Stack, struttura del progetto, isole, SEO |
+| `docs/architettura_tecnica_nzt_solutions.md` | Stack del sito, struttura, isole, SEO |
 | `docs/architettura_grafica_nzt_solutions_v1_0.md` | Design system e linee guida grafiche |
 | `docs/architettura_sicurezza_nzt_solutions.md` | **Regole di sicurezza vincolanti**, stato di applicazione, checklist operativa, registro delle modifiche |
+| `docs/architettura_sicurezza_area_clienti.md` | Sicurezza di Area Clienti, API e database |
+| `docs/railway_ambiente_test.md` | Ambiente Railway di test |
 
 Ogni modifica che tocca la sicurezza va riportata nel documento di sicurezza (sezione interessata,
 tabella di stato, registro delle modifiche).
 
-## Sviluppo e verifiche
+## Frontend
+
+Dalla radice (un solo `pnpm install` per tutto il frontend):
 
 ```bash
 pnpm install
-pnpm dev          # server di sviluppo (http://localhost:4321)
+pnpm dev          # sito pubblico (http://localhost:4321)
 pnpm lint
 pnpm build        # controllo dei tipi + build + hash per la Content Security Policy
 pnpm test         # test di sicurezza (quelli di integrazione richiedono il build)
 pnpm serve        # server di produzione in locale (node server/index.mjs)
+pnpm dev:portal   # Area Clienti        (anche build:portal, test:portal)
+pnpm dev:admin    # dashboard admin     (anche build:admin, test:admin)
 ```
 
-## Deploy su Railway
+### Deploy del sito su Railway
 
 Le pagine sono statiche (prerender); il server Node le serve e gestisce l'unica rotta dinamica,
-`POST /api/contact`. Railway costruisce l'immagine dal `Dockerfile` (vedi `railway.json`) e avvia
-`node server/index.mjs`: è il perimetro di sicurezza che avvolge il server di Astro (header di sicurezza,
-verifica dell'origine, limiti su metodi e corpo). Non avviare direttamente `dist/server/entry.mjs`.
-L'healthcheck è `GET /healthz`.
+`POST /api/contact`. Railway costruisce l'immagine da `frontend/landing/Dockerfile` (contesto: radice
+del repository; configurazione in `frontend/landing/railway.json`) e avvia `node server/index.mjs`: è il
+perimetro di sicurezza che avvolge il server di Astro (header di sicurezza, verifica dell'origine, limiti
+su metodi e corpo). Non avviare direttamente `dist/server/entry.mjs`. L'healthcheck è `GET /healthz`.
 
-Variabili da impostare su Railway (vedi `.env.example`):
+Variabili da impostare su Railway (vedi `frontend/landing/.env.example`):
 
 | Variabile | Note |
 | --- | --- |
@@ -49,23 +74,37 @@ Protezione del modulo contatti: Cloudflare Turnstile + campo honeypot + rate lim
 10 minuti per client, 30 email l'ora in totale, in memoria: una sola istanza). Le azioni da completare
 su Cloudflare, Railway, DNS e GitHub sono elencate nella checklist del documento di sicurezza (§11).
 
-## Area Clienti e stack di prova in Docker
+Il pulsante "Area Clienti" del sito porta a `/accedi` del portale (URL configurabile con
+`PUBLIC_CLIENT_AREA_URL` in build).
 
-Il repo è un workspace pnpm: la Home è nella radice, l'Area Clienti è in `apps/portal` (frontend clienti), `apps/admin` (dashboard amministratore, login separato), `apps/api` (backend FastAPI) e `packages/ui` (design system condiviso). Il pulsante "Area Clienti" della Home porta a `/accedi` del portale (URL configurabile con `PUBLIC_CLIENT_AREA_URL` in build).
+## Backend
 
-Un solo comando builda e avvia tutto (MongoDB, Redis, API con schema MongoDB all'avvio, portale, Home):
+```bash
+cd backend
+uv sync
+scripts/test-services.sh start   # MongoDB 8 + Redis 7 reali (MONGOD=/percorso/mongod se non nel PATH)
+uv run pytest
+uv run python -m app.schema      # applica validatori + indici MongoDB (utente di schema)
+```
+
+Configurazione: `backend/.env.example`. Deploy: `backend/Dockerfile` + `backend/railway.json`.
+
+## Database
+
+MongoDB esterno (cluster condiviso tra i servizi NZT, un database per servizio). Vedi
+`database/README.md`: utenti a privilegio minimo, schema, migrazione dei dati da PostgreSQL.
+
+## Tutto insieme in Docker
+
+Un solo comando builda e avvia tutto (MongoDB, Redis, API con schema all'avvio, portale, dashboard, sito):
 
 ```bash
 docker compose up --build
 ```
 
-- Home: http://localhost:4321 · Portale clienti: http://localhost:8080 · Dashboard admin: http://localhost:8081 · API: http://localhost:8000/docs
+- Sito: http://localhost:4321 · Portale clienti: http://localhost:8080 · Dashboard admin: http://localhost:8081 · API: http://localhost:8000/docs
 - Le email di verifica sono nei log: `docker compose logs -f api`. Google OAuth non è configurato. Chiavi Turnstile di test.
-- Utenti di prova (le email devono essere valide, "admin" da solo non passa; creati all'avvio dell'API, vedi `apps/api/docker-entrypoint.sh`, solo stack locale):
+- Utenti di prova (creati all'avvio dell'API, vedi `backend/docker-entrypoint.sh`, solo stack locale):
   - **Admin**: `admin@example.com` / `admin` → dashboard amministratore http://localhost:8081
-  - **Cliente**: `cliente@example.com` / `cliente` → Area Clienti normale http://localhost:8080/accedi
+  - **Cliente**: `cliente@example.com` / `cliente` → Area Clienti http://localhost:8080/accedi
 - Reset dei dati: `docker compose down -v`. Credenziali solo di prova.
-- Database: **MongoDB** (in produzione un cluster esterno condiviso tra i servizi, un database per servizio). Schema (validatori + indici): `cd apps/api && uv run python -m app.schema`; utenti a privilegio minimo: `apps/api/scripts/db/create_roles.py`. Migrazione una tantum dei dati da PostgreSQL: `apps/api/scripts/migrate_postgres_to_mongo.py` (vedi `docs/architettura_sicurezza_area_clienti.md` §24.2).
-- Test dell'API: `cd apps/api && scripts/test-services.sh start && uv run pytest` (MongoDB 8 e Redis 7 reali; `MONGOD=/percorso/mongod` se `mongod` non è nel PATH).
-- Il vecchio compose di sviluppo della Home è `docker-compose.dev.yml`.
-- Script utili: `pnpm dev:portal`, `pnpm build:portal`, `pnpm test:portal`.
