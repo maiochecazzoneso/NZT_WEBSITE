@@ -1,36 +1,39 @@
 """Session manager: refresh-token families, Refresh Token Rotation with reuse detection
-(spec §6.2-6.3, D-A7, D-A8).
+(spec §6.2-6.3, D-A7, D-A8) on MongoDB.
 
-Atomic rotation design (D-A8): one conditional
-    UPDATE refresh_tokens SET is_used = TRUE
-    FROM refresh_token_families f
-    WHERE token_hash = :h AND is_used = FALSE AND expires_at > now()
-      AND f.id = family_id AND f.is_revoked = FALSE AND f.dpop_jkt = :jkt
-    RETURNING ...
-Postgres row locking guarantees that of N concurrent requests presenting the same token
-exactly one UPDATE matches; the others re-check the row after the winner commits, see
-is_used = TRUE and are classified as REUSE (=> every family of the user is revoked and
-already issued access tokens are killed through the Redis marker). The frontend must
-serialise refreshes with Web Locks (spec §6.4).
+Data model:
+* ``refreshTokenFamilies`` - one document per session (DPoP key binding, revocation state)
+  holding the CURRENT token hash and its expiry;
+* ``refreshTokens`` - ``_id = sha256(token)`` for EVERY token ever issued -> its family
+  (reuse detection, per-family rate limit, logout). Expired documents are removed by TTL.
+
+Atomic rotation (D-A8) = ONE single-document compare-and-swap, no transaction:
+    findOneAndUpdate(
+        {_id: family, currentTokenHash: h, isRevoked: false, dpopJkt: jkt, expiresAt > now},
+        {$set: {currentTokenHash: new, expiresAt: ...}})
+Document-level atomicity guarantees that of N concurrent requests presenting the same
+token exactly one matches. A loser finds ``currentTokenHash != h``: the token was already
+used => REUSE (every family of the user is revoked and already issued access tokens are
+killed through the Redis marker). The new token's ``refreshTokens`` document is written
+BEFORE the swap, so every token that can ever be handed out is known to the reuse
+detector (a failed swap deletes it again). The frontend serialises refreshes with Web
+Locks (spec §6.4).
 
 Access-token revocation markers (review L3). Revoking families does not touch access
 tokens already issued, so revocation also writes a Redis marker "every access token of
 this user / DPoP key issued at or before instant M is dead". The ordering uses ONE clock
 with millisecond resolution, the Redis server clock (TIME), for both sides:
-* the marker M is read from TIME inside a Lua script AFTER the revoking UPDATE (logout:
-  after its commit; reuse: while the UPDATE's row locks are held, committed right after),
-  and the stored value only ever moves forward (max(old, new));
-* every access token carries ``iat_ms`` = Redis TIME captured BEFORE the DB work that
-  issues it (refresh-token consume / family creation).
-A token is rejected iff ``iat_ms <= M``. Therefore any token whose consume ran before the
-revoking UPDATE is rejected (its instant precedes M), a consume that runs after it cannot
-succeed (the family is revoked; a concurrent one waits on the row lock and then fails),
-a token minted after the revocation (e.g. the legitimate re-login in the same wall-clock
-second, previously rejected because both sides were truncated to whole seconds) is
-accepted, and the only ambiguous case, the same millisecond, fails CLOSED. Using the
-Redis clock removes skew between API replicas. Legacy second-resolution markers
-(written by a not-yet-upgraded replica during a rolling deploy) are still honoured with
-the old semantics; they expire after access_ttl + 5 s."""
+* the marker M is read from TIME inside a Lua script AFTER the revoking update has been
+  acknowledged by the majority, and the stored value only ever moves forward;
+* every access token carries ``iat_ms`` = Redis TIME captured BEFORE the database work
+  that issues it (family creation / swap).
+A token is rejected iff ``iat_ms <= M``. A swap that won before the revoking update had
+its ``iat_ms`` taken before it, hence before M: its access token is dead and its new
+refresh token belongs to a revoked family. A swap after the update cannot match
+(``isRevoked: false``). A token minted after the revocation (the legitimate re-login in
+the same second) is accepted; the same millisecond fails CLOSED. Using the Redis clock
+removes skew between API replicas. Legacy second-resolution markers (rolling deploys of
+older replicas) are still honoured; they expire after access_ttl + 5 s."""
 
 from __future__ import annotations
 
@@ -39,13 +42,11 @@ import enum
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 from redis.asyncio import Redis
-from sqlalchemy import and_, func, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import RefreshToken, RefreshTokenFamily, User
+from app.db import Collections, utcnow
 from app.security.tokens import AccessTokenService, hash_refresh_token, new_refresh_token
 
 _REFRESH_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
@@ -70,7 +71,7 @@ return cur
 class RefreshOutcome(enum.Enum):
     INVALID = "invalid"  # unknown/malformed token
     EXPIRED = "expired"
-    REVOKED = "revoked"  # family revoked (logout / previous reuse)
+    REVOKED = "revoked"  # family revoked (logout / previous reuse) or user not allowed
     KEY_MISMATCH = "key_mismatch"  # DPoP key differs from the family key
     REUSE = "reuse"  # already-used token presented again => compromise
 
@@ -89,202 +90,185 @@ class IssuedSession:
     family_id: uuid.UUID
 
 
+@dataclass(frozen=True, slots=True)
+class TokenRef:
+    """A presented refresh token that the server issued: its hash and family."""
+
+    token_hash: str
+    family_id: uuid.UUID
+
+
 def is_well_formed_refresh_token(raw: str | None) -> bool:
     return raw is not None and _REFRESH_TOKEN_RE.fullmatch(raw) is not None
 
 
 class SessionService:
     def __init__(
-        self, *, tokens: AccessTokenService, redis: Redis, refresh_ttl_seconds: int
+        self,
+        *,
+        tokens: AccessTokenService,
+        redis: Redis,
+        db: Collections,
+        refresh_ttl_seconds: int,
     ) -> None:
         self._tokens = tokens
         self._redis = redis
-        self._refresh_ttl = refresh_ttl_seconds
+        self._db = db
+        self._refresh_ttl = timedelta(seconds=refresh_ttl_seconds)
         self._mark_script = redis.register_script(_MARK_REVOKED_LUA)
 
     @property
     def access_ttl(self) -> int:
         return self._tokens.ttl
 
-    def _expiry(self) -> datetime:
-        return datetime.now(UTC) + timedelta(seconds=self._refresh_ttl)
-
     async def clock_ms(self) -> int:
         """Shared Redis clock in ms (the ordering clock of the revocation markers)."""
         seconds, micros = await self._redis.time()
         return int(seconds) * 1000 + int(micros) // 1000
 
-    async def _mark_revoked(self, key: str) -> None:
-        await self._mark_script(keys=[key], args=[self.access_ttl + 5])
+    async def _mark_revoked(self, key: str) -> int:
+        return int(await self._mark_script(keys=[key], args=[self.access_ttl + 5]))
 
-    async def create_session(
-        self, db: AsyncSession, *, user_id: uuid.UUID, jkt: str
+    def _issued(
+        self, *, user_id: uuid.UUID, jkt: str, issued_ms: int, raw: str, family_id: uuid.UUID
     ) -> IssuedSession:
-        """New family bound to the DPoP key + first refresh token. Caller commits."""
-        issued_ms = await self.clock_ms()  # BEFORE the DB work (see module docstring)
-        family = RefreshTokenFamily(id=uuid.uuid4(), user_id=user_id, dpop_jkt=jkt)
-        db.add(family)
-        await db.flush()
-        raw = new_refresh_token()
-        db.add(
-            RefreshToken(
-                id=uuid.uuid4(),
-                family_id=family.id,
-                token_hash=hash_refresh_token(raw),
-                expires_at=self._expiry(),
-            )
-        )
-        await db.flush()
         return IssuedSession(
             access_token=self._tokens.issue(user_id=user_id, jkt=jkt, issued_ms=issued_ms),
             refresh_token=raw,
             expires_in=self._tokens.ttl,
-            family_id=family.id,
+            family_id=family_id,
         )
 
-    async def family_id_for(self, db: AsyncSession, raw: str | None) -> uuid.UUID | None:
+    async def lookup(self, raw: str | None) -> TokenRef | None:
+        """The family of any token the server issued (current or already used)."""
         if not is_well_formed_refresh_token(raw):
             return None
         assert raw is not None
-        result = await db.execute(
-            select(RefreshToken.family_id).where(RefreshToken.token_hash == hash_refresh_token(raw))
-        )
-        return result.scalar_one_or_none()
-
-    async def rotate(self, db: AsyncSession, *, raw: str | None, jkt: str) -> IssuedSession:
-        """RTR. Commits on success AND on reuse detection (revocation must persist)."""
-        if not is_well_formed_refresh_token(raw):
-            raise RefreshError(RefreshOutcome.INVALID)
-        assert raw is not None
         token_hash = hash_refresh_token(raw)
-        issued_ms = await self.clock_ms()  # BEFORE the consume (see module docstring)
+        doc = await self._db.refresh_tokens.find_one({"_id": token_hash}, {"familyId": 1})
+        return TokenRef(token_hash, doc["familyId"]) if doc is not None else None
 
-        consumed = await db.execute(
-            update(RefreshToken)
-            .where(
-                and_(
-                    RefreshToken.token_hash == token_hash,
-                    RefreshToken.is_used.is_(False),
-                    RefreshToken.expires_at > func.now(),
-                    RefreshTokenFamily.id == RefreshToken.family_id,
-                    RefreshTokenFamily.is_revoked.is_(False),
-                    RefreshTokenFamily.dpop_jkt == jkt,
-                )
-            )
-            .values(is_used=True)
-            .returning(RefreshToken.family_id, RefreshTokenFamily.user_id)
-            .execution_options(synchronize_session=False)
+    async def create_session(self, *, user_id: uuid.UUID, jkt: str) -> IssuedSession:
+        """New family bound to the DPoP key + its first refresh token."""
+        issued_ms = await self.clock_ms()  # BEFORE the database work (see docstring)
+        now = utcnow()
+        family_id = uuid.uuid4()
+        raw = new_refresh_token()
+        token_hash = hash_refresh_token(raw)
+        expires_at = now + self._refresh_ttl
+        await self._db.refresh_tokens.insert_one(
+            {"_id": token_hash, "familyId": family_id, "expiresAt": expires_at, "createdAt": now}
         )
-        row = consumed.one_or_none()
-        if row is not None:
-            family_id, user_id = row
-            user_ok = await db.execute(
-                select(User.id).where(User.id == user_id, User.is_active.is_(True))
-            )
-            if user_ok.scalar_one_or_none() is None:
-                await db.rollback()
-                raise RefreshError(RefreshOutcome.REVOKED)
-            new_raw = new_refresh_token()
-            db.add(
-                RefreshToken(
-                    id=uuid.uuid4(),
-                    family_id=family_id,
-                    token_hash=hash_refresh_token(new_raw),
-                    expires_at=self._expiry(),
-                )
-            )
-            await db.commit()
-            return IssuedSession(
-                access_token=self._tokens.issue(user_id=user_id, jkt=jkt, issued_ms=issued_ms),
-                refresh_token=new_raw,
-                expires_in=self._tokens.ttl,
-                family_id=family_id,
-            )
+        await self._db.families.insert_one(
+            {
+                "_id": family_id,
+                "userId": user_id,
+                "dpopJkt": jkt,
+                "isRevoked": False,
+                "revokedReason": None,
+                "currentTokenHash": token_hash,
+                "expiresAt": expires_at,
+                "createdAt": now,
+                "updatedAt": now,
+            }
+        )
+        return self._issued(
+            user_id=user_id, jkt=jkt, issued_ms=issued_ms, raw=raw, family_id=family_id
+        )
 
-        # Nothing consumed: classify why (row state is read after any concurrent winner).
-        await db.rollback()
-        result = await db.execute(
-            select(
-                RefreshToken.is_used,
-                RefreshToken.expires_at,
-                RefreshTokenFamily.is_revoked,
-                RefreshTokenFamily.dpop_jkt,
-                RefreshTokenFamily.user_id,
-            )
-            .join(RefreshTokenFamily, RefreshTokenFamily.id == RefreshToken.family_id)
-            .where(RefreshToken.token_hash == token_hash)
-        )
-        state = result.one_or_none()
-        if state is None:
-            await db.rollback()
+    async def rotate(
+        self, ref: TokenRef | None, *, jkt: str, required_role: str | None = None
+    ) -> IssuedSession:
+        """RTR. ``required_role`` (admin dashboard): the session is revoked and REVOKED
+        raised when the user no longer has that role."""
+        if ref is None:
             raise RefreshError(RefreshOutcome.INVALID)
-        is_used, expires_at, is_revoked, family_jkt, user_id = state
-        if is_used:
-            await self.revoke_all_for_user(db, user_id, reason="reuse_detected")
-            await db.commit()
+        issued_ms = await self.clock_ms()  # BEFORE the swap (see docstring)
+        now = utcnow()
+        new_raw = new_refresh_token()
+        new_hash = hash_refresh_token(new_raw)
+        new_expiry = now + self._refresh_ttl
+        await self._db.refresh_tokens.insert_one(
+            {"_id": new_hash, "familyId": ref.family_id, "expiresAt": new_expiry, "createdAt": now}
+        )
+        family = await self._db.families.find_one_and_update(
+            {
+                "_id": ref.family_id,
+                "currentTokenHash": ref.token_hash,
+                "isRevoked": False,
+                "dpopJkt": jkt,
+                "expiresAt": {"$gt": now},
+            },
+            {"$set": {"currentTokenHash": new_hash, "expiresAt": new_expiry, "updatedAt": now}},
+            projection={"userId": 1},
+        )
+        if family is not None:
+            user_id: uuid.UUID = family["userId"]
+            allowed: dict[str, object] = {"_id": user_id, "isActive": True}
+            if required_role is not None:
+                allowed["role"] = required_role
+            if await self._db.users.find_one(allowed, {"_id": 1}) is None:
+                await self.revoke_family(ref.family_id, reason="user_not_allowed")
+                raise RefreshError(RefreshOutcome.REVOKED)
+            return self._issued(
+                user_id=user_id, jkt=jkt, issued_ms=issued_ms, raw=new_raw, family_id=ref.family_id
+            )
+
+        # Nothing swapped: the new token is never handed out. Classify why.
+        await self._db.refresh_tokens.delete_one({"_id": new_hash})
+        state = await self._db.families.find_one(
+            {"_id": ref.family_id},
+            {"currentTokenHash": 1, "isRevoked": 1, "expiresAt": 1, "dpopJkt": 1, "userId": 1},
+        )
+        if state is None:
+            raise RefreshError(RefreshOutcome.INVALID)
+        if state["currentTokenHash"] != ref.token_hash:
+            await self.revoke_all_for_user(state["userId"], reason="reuse_detected")
             raise RefreshError(RefreshOutcome.REUSE)
-        await db.rollback()
-        if is_revoked:
+        if state["isRevoked"]:
             raise RefreshError(RefreshOutcome.REVOKED)
-        if expires_at <= datetime.now(UTC):
+        if state["expiresAt"] <= now:
             raise RefreshError(RefreshOutcome.EXPIRED)
-        if family_jkt != jkt:
+        if state["dpopJkt"] != jkt:
             raise RefreshError(RefreshOutcome.KEY_MISMATCH)
         raise RefreshError(RefreshOutcome.INVALID)  # pragma: no cover - lost race edge
 
-    async def revoke_all_for_user(
-        self, db: AsyncSession, user_id: uuid.UUID, *, reason: str
-    ) -> None:
-        """Revoke EVERY family of the user and kill already-issued access tokens (D-A7)."""
-        await db.execute(
-            update(RefreshTokenFamily)
-            .where(RefreshTokenFamily.user_id == user_id, RefreshTokenFamily.is_revoked.is_(False))
-            .values(is_revoked=True, revoked_reason=reason)
-            .execution_options(synchronize_session=False)
+    async def revoke_family(self, family_id: uuid.UUID, *, reason: str) -> None:
+        await self._db.families.update_one(
+            {"_id": family_id, "isRevoked": False},
+            {"$set": {"isRevoked": True, "revokedReason": reason, "updatedAt": utcnow()}},
         )
-        await self._mark_revoked(USER_REVOKED_AFTER_MS.format(user_id))
 
-    async def kill_user_access_tokens_after_commit(self, user_id: uuid.UUID) -> None:
-        """Google takeover (email verification AGGIUNTA): called AFTER the transaction that
-        revoked every family of the user has COMMITTED. Moves the user marker to "now", so
-        any access token whose refresh consume ran before that commit is dead (a consume
-        after it cannot succeed: the family is revoked), then waits until the shared Redis
-        clock has passed the marker, so the session created next for the legitimate owner
-        is not caught by the same-millisecond fail-closed rule."""
-        marker = int(
-            await self._mark_script(
-                keys=[USER_REVOKED_AFTER_MS.format(user_id)], args=[self.access_ttl + 5]
-            )
+    async def revoke_all_for_user(self, user_id: uuid.UUID, *, reason: str) -> int:
+        """Revoke EVERY family of the user and kill already-issued access tokens (D-A7).
+        Returns the marker instant (Redis clock, ms)."""
+        await self._db.families.update_many(
+            {"userId": user_id, "isRevoked": False},
+            {"$set": {"isRevoked": True, "revokedReason": reason, "updatedAt": utcnow()}},
         )
+        return await self._mark_revoked(USER_REVOKED_AFTER_MS.format(user_id))
+
+    async def wait_until_after(self, marker_ms: int) -> None:
+        """Wait until the shared Redis clock has passed ``marker_ms``, so a session created
+        next for the legitimate owner (Google takeover) is not caught by the
+        same-millisecond fail-closed rule."""
         for _ in range(1000):  # normally 0-2 iterations (1 ms resolution)
-            if await self.clock_ms() > marker:
+            if await self.clock_ms() > marker_ms:
                 return
             await asyncio.sleep(0.001)
         raise RuntimeError("Redis clock did not advance")  # pragma: no cover
 
-    async def logout(self, db: AsyncSession, *, raw: str, jkt: str) -> bool:
-        """Revoke the family of ``raw``. Returns False when the DPoP key does not match.
-        Unknown tokens are treated as already logged out (idempotent)."""
-        if not is_well_formed_refresh_token(raw):
+    async def logout(self, ref: TokenRef | None, *, jkt: str) -> bool:
+        """Revoke the family of the presented token. False when the DPoP key does not
+        match. Unknown tokens are treated as already logged out (idempotent)."""
+        if ref is None:
             return True
-        result = await db.execute(
-            select(RefreshTokenFamily.id, RefreshTokenFamily.dpop_jkt)
-            .join(RefreshToken, RefreshToken.family_id == RefreshTokenFamily.id)
-            .where(RefreshToken.token_hash == hash_refresh_token(raw))
-        )
-        row = result.one_or_none()
-        if row is None:
+        family = await self._db.families.find_one({"_id": ref.family_id}, {"dpopJkt": 1})
+        if family is None:
             return True
-        family_id, family_jkt = row
-        if family_jkt != jkt:
+        if family["dpopJkt"] != jkt:
             return False
-        await db.execute(
-            update(RefreshTokenFamily)
-            .where(RefreshTokenFamily.id == family_id, RefreshTokenFamily.is_revoked.is_(False))
-            .values(is_revoked=True, revoked_reason="logout")
-            .execution_options(synchronize_session=False)
-        )
-        await db.commit()
+        await self.revoke_family(ref.family_id, reason="logout")
         # Kill access tokens bound to this key that were issued up to now.
         await self._mark_revoked(JKT_REVOKED_AFTER_MS.format(jkt))
         return True

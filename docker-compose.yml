@@ -12,24 +12,32 @@
 name: nzt
 
 services:
-  postgres:
-    image: postgres:16-alpine
+  # MongoDB con autenticazione, solo sulla rete interna del compose (nessuna porta pubblicata).
+  mongo:
+    image: mongo:8.0
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres_demo
-      ROLES_SQL_FILE: /nzt-sql/roles.sql
-      NZT_DB_NAME: nzt
-      NZT_MIGRATOR_PASSWORD: nzt_migrator_demo
-      NZT_APP_PASSWORD: nzt_app_demo
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root_demo
     volumes:
-      - ./apps/api/scripts/db/roles.sql:/nzt-sql/roles.sql:ro
-      - ./apps/api/scripts/db/init-roles.sh:/docker-entrypoint-initdb.d/10-init-roles.sh:ro
-      - pgdata:/var/lib/postgresql/data
+      - mongodata:/data/db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d nzt"]
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       interval: 2s
       timeout: 3s
       retries: 30
+
+  # Utenti a privilegio minimo (apps/api/scripts/db/create_roles.py), poi termina. Le credenziali
+  # root restano in questo container: l'API non le vede mai.
+  mongo-init:
+    build: ./apps/api
+    command: ["python", "scripts/db/create_roles.py"]
+    environment:
+      NZT_MONGODB_ROOT_URI: mongodb://root:root_demo@mongo:27017/?authSource=admin
+      NZT_DB_NAME: nzt
+      NZT_MIGRATOR_PASSWORD: nzt_migrator_demo
+      NZT_APP_PASSWORD: nzt_app_demo
+    depends_on:
+      mongo: { condition: service_healthy }
 
   redis:
     image: redis:7-alpine
@@ -40,7 +48,7 @@ services:
       timeout: 3s
       retries: 30
 
-  # All'avvio: migrazioni + account di prova (vedi apps/api/docker-entrypoint.sh), poi il server.
+  # All'avvio: schema MongoDB + account di prova (vedi apps/api/docker-entrypoint.sh), poi il server.
   api:
     build: ./apps/api
     environment:
@@ -49,17 +57,18 @@ services:
       NZT_PORTAL_ORIGINS: http://localhost:8080
       NZT_ADMIN_ORIGINS: http://localhost:8081
       NZT_STORAGE_PUBLIC_ORIGIN: http://localhost:9000
-      NZT_DATABASE_URL: postgresql+asyncpg://nzt_app:nzt_app_demo@postgres:5432/nzt
+      NZT_MONGODB_URI: mongodb://nzt_app:nzt_app_demo@mongo:27017/?authSource=nzt
+      NZT_MONGODB_DATABASE: nzt
       NZT_REDIS_URL: redis://redis:6379/0
       NZT_DIRECT_CLIENT_CONNECTIONS: "true"
       NZT_MAIL_BACKEND: console
       NZT_BOOTSTRAP: "true"
       NZT_SEED_DEV_USERS: "true"
-      NZT_BOOTSTRAP_MIGRATIONS_URL: postgresql+asyncpg://nzt_migrator:nzt_migrator_demo@postgres:5432/nzt
+      NZT_BOOTSTRAP_MIGRATIONS_URI: mongodb://nzt_migrator:nzt_migrator_demo@mongo:27017/?authSource=nzt
     ports:
       - "8000:8000"
     depends_on:
-      postgres: { condition: service_healthy }
+      mongo-init: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
 
   portal:
@@ -93,4 +102,4 @@ services:
       - "4321:8080"
 
 volumes:
-  pgdata:
+  mongodata:

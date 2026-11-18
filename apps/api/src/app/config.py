@@ -11,7 +11,7 @@ import re
 from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated, Literal
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -23,7 +23,6 @@ class Environment(StrEnum):
     PRODUCTION = "production"
 
 
-SslMode = Literal["disable", "require", "verify-ca", "verify-full"]
 # Transactional email (email verification, AGGIUNTA). "resend" is the only production
 # backend; "console" (logs the message), "file" (one JSON file per message) and "memory"
 # (in-process outbox) are development/test-only and refused in production.
@@ -32,6 +31,16 @@ MailBackend = Literal["resend", "console", "file", "memory"]
 _SEMVER = re.compile(r"^\d{1,4}\.\d{1,4}\.\d{1,4}$")
 _SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+# MongoDB database names: no "/\\. \"$" and short (Atlas limit 38 bytes); we allow a safe subset.
+_MONGO_DB_NAME = re.compile(r"^[A-Za-z0-9_-]{1,38}$")
+_MONGO_SCHEMES = {"mongodb", "mongodb+srv"}
+# URI options that weaken TLS: refused in production (equivalent of libpq "verify-full").
+_MONGO_INSECURE_TLS_OPTIONS = {
+    "tlsinsecure",
+    "tlsallowinvalidcertificates",
+    "tlsallowinvalidhostnames",
+    "ssl_cert_reqs",
+}
 
 
 def _origin(url: str) -> str:
@@ -41,6 +50,18 @@ def _origin(url: str) -> str:
     if parts.path not in {"", "/"} or parts.query or parts.fragment:
         raise ValueError(f"must be an origin without path/query: {url!r}")
     return f"{parts.scheme}://{parts.netloc}".lower()
+
+
+def _mongo_uri_parts(uri: str) -> tuple[bool, dict[str, str]]:
+    """(has_username, lower-cased query options) WITHOUT resolving DNS: pymongo's
+    own parser performs the SRV lookup, which must never happen during config validation."""
+    parts = urlsplit(uri)
+    if parts.scheme not in _MONGO_SCHEMES:
+        raise ValueError("NZT_MONGODB_URI must start with mongodb:// or mongodb+srv://")
+    netloc = parts.netloc
+    userinfo = netloc.rpartition("@")[0] if "@" in netloc else ""
+    options = {k.lower(): v.lower() for k, v in parse_qsl(parts.query, keep_blank_values=True)}
+    return bool(userinfo.partition(":")[0]), options
 
 
 def _is_blank(value: object) -> bool:
@@ -73,15 +94,21 @@ class Settings(BaseSettings):
     )
     storage_public_origin: str = "https://storage.nztsolutions.it"
 
-    # --- Database ---------------------------------------------------------------------
-    database_url: SecretStr = SecretStr(
-        "postgresql+asyncpg://nzt_app:nzt_app_test@127.0.0.1:55432/nzt_test"
+    # --- MongoDB ----------------------------------------------------------------------
+    # Runtime user: custom role limited to find/insert/update/remove on ONE database (no
+    # createIndex/collMod/drop). The schema user (validators + indexes) is only used by
+    # ``python -m app.schema`` through NZT_MONGODB_MIGRATIONS_URI, never by the API.
+    mongodb_uri: SecretStr = SecretStr(
+        "mongodb://nzt_app:nzt_app_test@127.0.0.1:57017/?authSource=nzt_test&directConnection=true"
     )
-    migrations_database_url: SecretStr | None = None
-    database_sslmode: SslMode | None = None  # default: verify-full in prod, disable otherwise
-    database_ssl_root_cert: str | None = None
-    database_pool_size: int = Field(default=10, ge=1, le=100)
-    database_max_overflow: int = Field(default=5, ge=0, le=100)
+    mongodb_migrations_uri: SecretStr | None = None
+    mongodb_database: str = "nzt_test"
+    mongodb_tls: bool | None = None  # default: required in production, off otherwise
+    mongodb_tls_ca_file: str | None = None  # CA bundle when the server CA is not a system CA
+    mongodb_max_pool_size: int = Field(default=10, ge=1, le=100)
+    # Client-side operation timeout (CSOT), same role as the old statement_timeout.
+    mongodb_timeout_ms: int = Field(default=15_000, ge=1_000, le=60_000)
+    mongodb_server_selection_timeout_ms: int = Field(default=5_000, ge=500, le=30_000)
 
     # --- Redis ------------------------------------------------------------------------
     redis_url: SecretStr = SecretStr("redis://127.0.0.1:56379/0")
@@ -173,6 +200,20 @@ class Settings(BaseSettings):
             ipaddress.ip_network(cidr, strict=False)
         return v
 
+    @field_validator("mongodb_database")
+    @classmethod
+    def _check_mongo_db(cls, v: str) -> str:
+        if not _MONGO_DB_NAME.fullmatch(v):
+            raise ValueError("mongodb_database must match [A-Za-z0-9_-]{1,38}")
+        return v
+
+    @field_validator("mongodb_uri", "mongodb_migrations_uri")
+    @classmethod
+    def _check_mongo_uri(cls, v: SecretStr | None) -> SecretStr | None:
+        if v is not None:
+            _mongo_uri_parts(v.get_secret_value())
+        return v
+
     @field_validator("launcher_version")
     @classmethod
     def _check_version(cls, v: str) -> str:
@@ -229,21 +270,25 @@ class Settings(BaseSettings):
             raise ValueError("production requires NZT_LAUNCHER_SHA256")
         # Infrastructure endpoints must be configured explicitly: the built-in defaults
         # point at the local test services and must never be used in production.
-        # NZT_MIGRATIONS_DATABASE_URL is deliberately NOT required (nor wanted) here: DDL
-        # migrations run in a separate pipeline step and the API service must not hold the
-        # migrator credentials; alembic/env.py requires it when migrations run.
+        # NZT_MONGODB_MIGRATIONS_URI is deliberately NOT required (nor wanted) here: the
+        # schema step (validators + indexes) runs separately and the API service must not
+        # hold the schema user's credentials; app/schema.py requires it when it runs.
         implicit = [
             env
             for name, env in (
-                ("database_url", "NZT_DATABASE_URL"),
+                ("mongodb_uri", "NZT_MONGODB_URI"),
+                ("mongodb_database", "NZT_MONGODB_DATABASE"),
                 ("redis_url", "NZT_REDIS_URL"),
             )
             if name not in self.model_fields_set or _is_blank(getattr(self, name))
         ]
         if implicit:
             raise ValueError(f"production requires explicit {', '.join(implicit)}")
-        if self.effective_db_sslmode != "verify-full":
-            raise ValueError("production requires NZT_DATABASE_SSLMODE=verify-full")
+        self._check_production_mongo_uri(self.mongodb_uri, "NZT_MONGODB_URI")
+        if self.mongodb_migrations_uri is not None:  # only set in the schema step
+            self._check_production_mongo_uri(
+                self.mongodb_migrations_uri, "NZT_MONGODB_MIGRATIONS_URI"
+            )
         if self.trusted_proxy_cidrs and self.direct_client_connections:
             raise ValueError(
                 "production: set NZT_TRUSTED_PROXY_CIDRS or NZT_DIRECT_CLIENT_CONNECTIONS, not both"
@@ -265,6 +310,19 @@ class Settings(BaseSettings):
         if storage.scheme != "https" or not storage.hostname:
             raise ValueError("production requires an https NZT_STORAGE_ENDPOINT_URL")
         return self
+
+    def _check_production_mongo_uri(self, uri: SecretStr, env: str) -> None:
+        """Production: authenticated, certificate- AND hostname-verified TLS only."""
+        if not self.effective_mongodb_tls:
+            raise ValueError("production requires NZT_MONGODB_TLS=true")
+        has_user, options = _mongo_uri_parts(uri.get_secret_value())
+        if not has_user:
+            raise ValueError(f"production requires credentials in {env}")
+        if any(options.get(o) == "false" for o in ("tls", "ssl")):
+            raise ValueError(f"production refuses tls=false in {env}")
+        weak = sorted(_MONGO_INSECURE_TLS_OPTIONS.intersection(options))
+        if weak:
+            raise ValueError(f"production refuses TLS-weakening options in {env}: {weak}")
 
     @model_validator(mode="after")
     def _mail_guards(self) -> Settings:
@@ -294,10 +352,10 @@ class Settings(BaseSettings):
         return self.environment == Environment.PRODUCTION
 
     @property
-    def effective_db_sslmode(self) -> SslMode:
-        if self.database_sslmode is not None:
-            return self.database_sslmode
-        return "verify-full" if self.is_production else "disable"
+    def effective_mongodb_tls(self) -> bool:
+        if self.mongodb_tls is not None:
+            return self.mongodb_tls
+        return self.is_production
 
     @property
     def effective_google_redirect_uri(self) -> str:

@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from datetime import UTC, datetime, timedelta
 
-import asyncpg
 import httpx
 import jwt
 from fastapi import FastAPI
 
+from app.db import Collections
 from tests.conftest import (
     ClientFactory,
     create_user,
     download,
     grant,
     login,
+    one,
+    only_user_id,
     refresh,
     refresh_cookie_of,
     register,
@@ -27,7 +30,11 @@ def _decode(token: str) -> dict[str, object]:
     return jwt.decode(token, options={"verify_signature": False})
 
 
-async def test_register_happy_path(client: httpx.AsyncClient, migrator_conn: asyncpg.Connection):
+def _sha(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+async def test_register_happy_path(client: httpx.AsyncClient, mongo: Collections):
     key = DPoPKey()
     resp = await register(client, key, email="  New.User@Domain.COM ")
     assert resp.status_code == 201, resp.text
@@ -47,20 +54,22 @@ async def test_register_happy_path(client: httpx.AsyncClient, migrator_conn: asy
     assert claims["cnf"] == {"jkt": key.thumbprint}
     assert int(claims["exp"]) - int(claims["iat"]) == 600  # type: ignore[call-overload]
 
-    row = await migrator_conn.fetchrow("SELECT * FROM users")
-    assert row["email"] == "new.user@domain.com"
-    assert row["is_verified"] is False
-    assert row["password_hash"].startswith("$argon2id$v=19$m=65536,t=3,p=4$")
-    ident = await migrator_conn.fetchrow("SELECT * FROM auth_identities")
-    assert (ident["provider"], ident["provider_user_id"]) == ("local", "new.user@domain.com")
-    fam = await migrator_conn.fetchrow("SELECT * FROM refresh_token_families")
-    assert fam["dpop_jkt"] == key.thumbprint
-    tok = await migrator_conn.fetchrow("SELECT * FROM refresh_tokens")
+    user = await one(mongo.users)
+    assert user["email"] == "new.user@domain.com"
+    assert user["isVerified"] is False
+    assert user["role"] == "customer"
+    assert user["passwordHash"].startswith("$argon2id$v=19$m=65536,t=3,p=4$")
+    assert [(i["provider"], i["providerUserId"]) for i in user["identities"]] == [
+        ("local", "new.user@domain.com")
+    ]
+    assert claims["sub"] == str(user["_id"])
+    fam = await one(mongo.families)
+    assert fam["dpopJkt"] == key.thumbprint
+    assert fam["userId"] == user["_id"]
+    tok = await one(mongo.refresh_tokens)
     raw = refresh_cookie_of(resp)
-    import hashlib
-
-    assert tok["token_hash"] == hashlib.sha256(raw.encode()).hexdigest()
-    assert raw not in tok["token_hash"]
+    assert tok["_id"] == fam["currentTokenHash"] == _sha(raw)  # only the hash is stored
+    assert tok["familyId"] == fam["_id"]
 
 
 async def test_cookie_attributes_exact(client: httpx.AsyncClient):
@@ -86,14 +95,14 @@ async def test_register_weak_passwords_rejected(client_factory: ClientFactory):
 
 
 async def test_register_existing_email_generic_failure(
-    client_factory: ClientFactory, migrator_conn: asyncpg.Connection
+    client_factory: ClientFactory, mongo: Collections
 ):
     assert (await register(client_factory("198.51.100.1"), DPoPKey())).status_code == 201
     resp = await register(client_factory("198.51.100.2"), DPoPKey(), email="USER@domain.com")
     assert resp.status_code == 400
     assert resp.json() == {"detail": "Registration failed"}
     assert "set-cookie" not in resp.headers
-    assert await migrator_conn.fetchval("SELECT count(*) FROM users") == 1
+    assert await mongo.users.count_documents({}) == 1
 
 
 async def test_register_requires_dpop(client: httpx.AsyncClient):
@@ -128,14 +137,12 @@ async def test_login_unknown_user_runs_dummy_verify(app: FastAPI, client: httpx.
 
 
 async def test_login_google_only_and_inactive_users_dummy_verify(
-    app: FastAPI, client_factory: ClientFactory, migrator_conn: asyncpg.Connection
+    app: FastAPI, client_factory: ClientFactory, mongo: Collections
 ):
     passwords = app.state.services.passwords
-    await create_user(migrator_conn, "google-only@domain.com", password_hash=None)
+    await create_user(mongo, "google-only@domain.com", password_hash=None)
     real_hash = await passwords.hash("SuperSecurePassword123!")
-    await create_user(
-        migrator_conn, "inactive@domain.com", password_hash=real_hash, is_active=False
-    )
+    await create_user(mongo, "inactive@domain.com", password_hash=real_hash, is_active=False)
     before = passwords.dummy_verifications
     r1 = await login(client_factory("198.51.100.7"), DPoPKey(), email="google-only@domain.com")
     r2 = await login(client_factory("198.51.100.8"), DPoPKey(), email="inactive@domain.com")
@@ -144,7 +151,7 @@ async def test_login_google_only_and_inactive_users_dummy_verify(
     assert passwords.dummy_verifications == before + 2
 
 
-async def test_refresh_rotation(client: httpx.AsyncClient, migrator_conn: asyncpg.Connection):
+async def test_refresh_rotation(client: httpx.AsyncClient, mongo: Collections):
     key = DPoPKey()
     first = refresh_cookie_of(await register(client, key))
     r1 = await refresh(client, key, cookie=first)
@@ -154,9 +161,12 @@ async def test_refresh_rotation(client: httpx.AsyncClient, migrator_conn: asyncp
     assert _decode(r1.json()["access_token"])["cnf"] == {"jkt": key.thumbprint}
     r2 = await refresh(client, key, cookie=second)
     assert r2.status_code == 200
-    rows = await migrator_conn.fetch("SELECT is_used FROM refresh_tokens ORDER BY created_at")
-    assert [r["is_used"] for r in rows] == [True, True, False]
-    assert await migrator_conn.fetchval("SELECT count(DISTINCT family_id) FROM refresh_tokens") == 1
+    third = refresh_cookie_of(r2)
+    tokens = await mongo.refresh_tokens.find({}).to_list()
+    assert {t["_id"] for t in tokens} == {_sha(first), _sha(second), _sha(third)}
+    fam = await one(mongo.families)
+    assert {t["familyId"] for t in tokens} == {fam["_id"]}
+    assert fam["currentTokenHash"] == _sha(third)  # the two older ones are used
 
 
 async def test_refresh_missing_cookie(client: httpx.AsyncClient):
@@ -168,7 +178,7 @@ async def test_refresh_missing_cookie(client: httpx.AsyncClient):
 
 
 async def test_reuse_detection_revokes_all_and_kills_access_tokens(
-    app: FastAPI, client_factory: ClientFactory, migrator_conn: asyncpg.Connection
+    app: FastAPI, client_factory: ClientFactory, mongo: Collections
 ):
     key = DPoPKey()
     c = client_factory()
@@ -178,8 +188,7 @@ async def test_reuse_detection_revokes_all_and_kills_access_tokens(
     other_key = DPoPKey()
     other = await login(client_factory("198.51.100.99"), other_key)
     other_token = other.json()["access_token"]
-    user_id = await migrator_conn.fetchval("SELECT id FROM users")
-    await grant(migrator_conn, user_id)
+    await grant(mongo, await only_user_id(mongo))
     assert (await download(c, other_key, other_token)).status_code == 200
 
     rotated = await refresh(c, key, cookie=first)
@@ -192,11 +201,9 @@ async def test_reuse_detection_revokes_all_and_kills_access_tokens(
     cleared = replay.headers.get_list("set-cookie")
     assert any(h.startswith("__Secure-refresh-token=;") and "Max-Age=0" in h for h in cleared)
 
-    fams = await migrator_conn.fetch(
-        "SELECT is_revoked, revoked_reason FROM refresh_token_families"
-    )
+    fams = await mongo.families.find({}).to_list()
     assert len(fams) == 2
-    assert all(f["is_revoked"] and f["revoked_reason"] == "reuse_detected" for f in fams)
+    assert all(f["isRevoked"] and f["revokedReason"] == "reuse_detected" for f in fams)
     # Legit rotated token is dead too, and the other device's access token is killed now.
     assert (await refresh(c, key, cookie=new_cookie)).status_code == 401
     killed = await download(c, other_key, other_token)
@@ -205,7 +212,7 @@ async def test_reuse_detection_revokes_all_and_kills_access_tokens(
 
 
 async def test_concurrent_double_refresh_exactly_one_wins(
-    client_factory: ClientFactory, migrator_conn: asyncpg.Connection
+    client_factory: ClientFactory, mongo: Collections
 ):
     key = DPoPKey()
     c = client_factory()
@@ -217,29 +224,27 @@ async def test_concurrent_double_refresh_exactly_one_wins(
     loser = next(r for r in results if r.status_code == 401)
     assert loser.json() == {"detail": "Refresh token reuse detected"}
     # Documented design (D-A8): the loser is treated as reuse => family revoked.
-    assert await migrator_conn.fetchval("SELECT bool_and(is_revoked) FROM refresh_token_families")
-    assert await migrator_conn.fetchval("SELECT count(*) FROM refresh_tokens") == 2
+    fam = await one(mongo.families)
+    assert fam["isRevoked"] is True
+    # The original + the winner's; the loser's never-issued token was removed again.
+    assert await mongo.refresh_tokens.count_documents({}) == 2
 
 
-async def test_expired_refresh_is_not_reuse(
-    client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
-):
+async def test_expired_refresh_is_not_reuse(client: httpx.AsyncClient, mongo: Collections):
     key = DPoPKey()
     raw = refresh_cookie_of(await register(client, key))
-    await migrator_conn.execute(
-        "UPDATE refresh_tokens SET expires_at = $1", datetime.now(UTC) - timedelta(seconds=1)
-    )
+    past = datetime.now(UTC) - timedelta(seconds=1)
+    await mongo.families.update_many({}, {"$set": {"expiresAt": past}})
+    await mongo.refresh_tokens.update_many({}, {"$set": {"expiresAt": past}})
     resp = await refresh(client, key, cookie=raw)
     assert resp.status_code == 401
     assert resp.json() == {"detail": "Invalid refresh token"}
-    fam = await migrator_conn.fetchrow("SELECT is_revoked FROM refresh_token_families")
-    assert fam["is_revoked"] is False
-    assert await migrator_conn.fetchval("SELECT is_used FROM refresh_tokens") is False
+    fam = await one(mongo.families)
+    assert fam["isRevoked"] is False
+    assert fam["currentTokenHash"] == _sha(raw)  # not consumed
 
 
-async def test_refresh_with_wrong_dpop_key(
-    client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
-):
+async def test_refresh_with_wrong_dpop_key(client: httpx.AsyncClient, mongo: Collections):
     key = DPoPKey()
     raw = refresh_cookie_of(await register(client, key))
     resp = await refresh(client, DPoPKey(), cookie=raw)
@@ -247,7 +252,8 @@ async def test_refresh_with_wrong_dpop_key(
     assert resp.json() == {"detail": "DPoP key does not match refresh token binding"}
     assert 'error="invalid_dpop_proof"' in resp.headers["www-authenticate"]
     # Token not consumed: the legitimate holder can still rotate.
-    assert await migrator_conn.fetchval("SELECT is_used FROM refresh_tokens") is False
+    assert (await one(mongo.families))["currentTokenHash"] == _sha(raw)
+    assert await mongo.refresh_tokens.count_documents({}) == 1
     assert (await refresh(client, key, cookie=raw)).status_code == 200
 
 
@@ -258,13 +264,12 @@ async def test_refresh_garbage_cookie(client: httpx.AsyncClient):
         assert resp.json() == {"detail": "Invalid refresh token"}
 
 
-async def test_logout(client: httpx.AsyncClient, migrator_conn: asyncpg.Connection):
+async def test_logout(client: httpx.AsyncClient, mongo: Collections):
     key = DPoPKey()
     reg = await register(client, key)
     raw = refresh_cookie_of(reg)
     token = reg.json()["access_token"]
-    user_id = await migrator_conn.fetchval("SELECT id FROM users")
-    await grant(migrator_conn, user_id)
+    await grant(mongo, await only_user_id(mongo))
 
     # Wrong key cannot log the session out.
     bad = await client.post(
@@ -290,10 +295,8 @@ async def test_logout(client: httpx.AsyncClient, migrator_conn: asyncpg.Connecti
         "__Secure-refresh-token=; HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth; "
         "Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
     ]
-    fam = await migrator_conn.fetchrow(
-        "SELECT is_revoked, revoked_reason FROM refresh_token_families"
-    )
-    assert (fam["is_revoked"], fam["revoked_reason"]) == (True, "logout")
+    fam = await one(mongo.families)
+    assert (fam["isRevoked"], fam["revokedReason"]) == (True, "logout")
     assert (await refresh(client, key, cookie=raw)).status_code == 401
     # Access tokens bound to the logged-out key are rejected immediately.
     assert (await download(client, key, token)).status_code == 401

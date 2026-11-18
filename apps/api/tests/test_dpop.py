@@ -6,16 +6,16 @@ import time
 import uuid
 from typing import Any
 
-import asyncpg
 import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from fastapi import FastAPI
 
+from app.db import Collections
 from app.security.dpop import DPoPError, DPoPValidator
 from app.security.jose_utils import jwk_thumbprint
-from tests.conftest import download, grant, register
+from tests.conftest import download, grant, only_user_id, register
 from tests.helpers import API_BASE, DPoPKey, b64url, forge_unsigned
 
 PATH = "/api/v1/auth/login"
@@ -195,21 +195,20 @@ async def test_missing_and_invalid_ath(validator: DPoPValidator):
 
 
 # --- protected resource level ----------------------------------------------------------
-async def _session(client: httpx.AsyncClient, conn: asyncpg.Connection) -> tuple[DPoPKey, str]:
+async def _session(client: httpx.AsyncClient, db: Collections) -> tuple[DPoPKey, str]:
     key = DPoPKey()
     resp = await register(client, key)
-    user_id = await conn.fetchval("SELECT id FROM users")
-    await grant(conn, user_id)
+    await grant(db, await only_user_id(db))
     return key, resp.json()["access_token"]
 
 
-async def test_resource_valid(client: httpx.AsyncClient, migrator_conn: asyncpg.Connection):
-    key, token = await _session(client, migrator_conn)
+async def test_resource_valid(client: httpx.AsyncClient, mongo: Collections):
+    key, token = await _session(client, mongo)
     assert (await download(client, key, token)).status_code == 200
 
 
-async def test_resource_missing_ath(client: httpx.AsyncClient, migrator_conn: asyncpg.Connection):
-    key, token = await _session(client, migrator_conn)
+async def test_resource_missing_ath(client: httpx.AsyncClient, mongo: Collections):
+    key, token = await _session(client, mongo)
     path = "/api/v1/downloads/launcher"
     resp = await client.get(
         path, headers={"Authorization": f"DPoP {token}", "DPoP": key.proof("GET", path)}
@@ -218,8 +217,8 @@ async def test_resource_missing_ath(client: httpx.AsyncClient, migrator_conn: as
     assert 'error="invalid_dpop_proof"' in resp.headers["www-authenticate"]
 
 
-async def test_resource_jkt_mismatch(client: httpx.AsyncClient, migrator_conn: asyncpg.Connection):
-    _key, token = await _session(client, migrator_conn)
+async def test_resource_jkt_mismatch(client: httpx.AsyncClient, mongo: Collections):
+    _key, token = await _session(client, mongo)
     thief = DPoPKey()  # stolen access token, attacker's own key
     resp = await download(client, thief, token)
     assert resp.status_code == 401
@@ -228,11 +227,11 @@ async def test_resource_jkt_mismatch(client: httpx.AsyncClient, migrator_conn: a
 
 
 async def test_resource_token_without_cnf(
-    app: FastAPI, client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
+    app: FastAPI, client: httpx.AsyncClient, mongo: Collections
 ):
-    key, _ = await _session(client, migrator_conn)
+    key, _ = await _session(client, mongo)
     svc = app.state.services.tokens
-    user_id = await migrator_conn.fetchval("SELECT id FROM users")
+    user_id = await only_user_id(mongo)
     now = int(time.time())
     no_cnf = jwt.encode(
         {"sub": str(user_id), "iss": API_BASE, "iat": now, "exp": now + 600, "jti": "x"},
@@ -245,10 +244,8 @@ async def test_resource_token_without_cnf(
     assert "cnf" in resp.headers["www-authenticate"]
 
 
-async def test_resource_bearer_scheme_rejected(
-    client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
-):
-    key, token = await _session(client, migrator_conn)
+async def test_resource_bearer_scheme_rejected(client: httpx.AsyncClient, mongo: Collections):
+    key, token = await _session(client, mongo)
     path = "/api/v1/downloads/launcher"
     resp = await client.get(
         path,
@@ -267,11 +264,11 @@ async def test_resource_no_auth_header(client: httpx.AsyncClient):
 
 
 async def test_resource_expired_and_forged_tokens(
-    app: FastAPI, client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
+    app: FastAPI, client: httpx.AsyncClient, mongo: Collections
 ):
-    key, token = await _session(client, migrator_conn)
+    key, token = await _session(client, mongo)
     svc = app.state.services.tokens
-    user_id = await migrator_conn.fetchval("SELECT id FROM users")
+    user_id = await only_user_id(mongo)
     expired = svc.issue(user_id=user_id, jkt=key.thumbprint, now=int(time.time()) - 3600)
     assert (await download(client, key, expired)).status_code == 401
     # Same claims signed by a different Ed25519 key.
@@ -287,9 +284,9 @@ async def test_resource_expired_and_forged_tokens(
     assert (await download(client, key, forged)).status_code == 401
 
 
-async def test_resource_inactive_user(client: httpx.AsyncClient, migrator_conn: asyncpg.Connection):
-    key, token = await _session(client, migrator_conn)
-    await migrator_conn.execute("UPDATE users SET is_active = FALSE")
+async def test_resource_inactive_user(client: httpx.AsyncClient, mongo: Collections):
+    key, token = await _session(client, mongo)
+    await mongo.users.update_many({}, {"$set": {"isActive": False}})
     assert (await download(client, key, token)).status_code == 401
 
 

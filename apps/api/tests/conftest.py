@@ -1,28 +1,39 @@
-"""Test fixtures against REAL PostgreSQL 16 + Redis 7 (no mocks for DB/Redis).
+"""Test fixtures against a REAL MongoDB 8 replica set + Redis 7 (no mocks for DB/Redis).
 
 Start them with ``scripts/test-services.sh start`` (native binaries) or
 ``docker compose -f docker-compose.test.yml up -d``. Endpoints can be overridden with
-NZT_TEST_PG_HOST/PORT, NZT_TEST_REDIS_URL."""
+NZT_TEST_MONGO_HOST/PORT, NZT_TEST_REDIS_URL.
+
+``mongo`` is a connection as the SCHEMA user (nzt_migrator, the old migrator_conn): tests
+use it to prepare and inspect documents; the API itself runs as the least-privilege
+nzt_app user."""
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
-import asyncpg
 import httpx
 import pytest
-from alembic import command
-from alembic.config import Config
 from fastapi import FastAPI
 from pydantic import SecretStr
 
 from app.config import Settings
+from app.db import (
+    PROVIDER_LOCAL,
+    ROLE_CUSTOMER,
+    Collections,
+    create_client,
+    identity_document,
+    user_document,
+    utcnow,
+)
 from app.main import create_app
+from app.schema import SPECS, apply_schema
 from tests.helpers import (
     API_BASE,
     FAKE_IDP,
@@ -34,31 +45,22 @@ from tests.helpers import (
     FakeGoogle,
 )
 
-ROOT = Path(__file__).resolve().parents[1]
-PG_HOST = os.environ.get("NZT_TEST_PG_HOST", "127.0.0.1")
-PG_PORT = int(os.environ.get("NZT_TEST_PG_PORT", "55432"))
-PG_DB = os.environ.get("NZT_TEST_PG_DB", "nzt_test")
-APP_DSN = f"postgresql://nzt_app:nzt_app_test@{PG_HOST}:{PG_PORT}/{PG_DB}"
-MIGRATOR_DSN = f"postgresql://nzt_migrator:nzt_migrator_test@{PG_HOST}:{PG_PORT}/{PG_DB}"
+MONGO_HOST = os.environ.get("NZT_TEST_MONGO_HOST", "127.0.0.1")
+MONGO_PORT = int(os.environ.get("NZT_TEST_MONGO_PORT", "57017"))
+MONGO_DB = os.environ.get("NZT_TEST_MONGO_DB", "nzt_test")
+_OPTS = f"authSource={MONGO_DB}&directConnection=true"
+APP_URI = f"mongodb://nzt_app:nzt_app_test@{MONGO_HOST}:{MONGO_PORT}/?{_OPTS}"
+MIGRATOR_URI = f"mongodb://nzt_migrator:nzt_migrator_test@{MONGO_HOST}:{MONGO_PORT}/?{_OPTS}"
 REDIS_URL = os.environ.get("NZT_TEST_REDIS_URL", "redis://127.0.0.1:56379/15")
 DEFAULT_IP = "203.0.113.10"
-TABLES = (
-    "email_verification_tokens",
-    "download_logs",
-    "entitlements",
-    "refresh_tokens",
-    "refresh_token_families",
-    "auth_identities",
-    "users",
-)
 
 
 def make_settings(**overrides: Any) -> Settings:
     base: dict[str, Any] = {
         "environment": "test",
-        "database_url": SecretStr(APP_DSN),
-        "migrations_database_url": SecretStr(MIGRATOR_DSN),
-        "database_sslmode": "disable",
+        "mongodb_uri": SecretStr(APP_URI),
+        "mongodb_migrations_uri": SecretStr(MIGRATOR_URI),
+        "mongodb_database": MONGO_DB,
         "redis_url": SecretStr(REDIS_URL),
         "api_public_base_url": API_BASE,
         "portal_origins": [PORTAL_ORIGIN],
@@ -79,40 +81,37 @@ def make_settings(**overrides: Any) -> Settings:
     return Settings(_env_file=None, **base)  # type: ignore[call-arg]
 
 
-def alembic_config(url: str = MIGRATOR_DSN) -> Config:
-    cfg = Config(str(ROOT / "alembic.ini"))
-    cfg.set_main_option("script_location", str(ROOT / "alembic"))
-    cfg.attributes["database_url"] = url
-    cfg.attributes["configure_logging"] = False
-    return cfg
-
-
 @pytest.fixture(scope="session", autouse=True)
-def _migrated_db() -> None:
-    command.upgrade(alembic_config(), "head")
+def _schema() -> None:
+    async def apply() -> None:
+        client = create_client(make_settings(), uri=MIGRATOR_URI)
+        try:
+            await apply_schema(client[MONGO_DB])
+        finally:
+            await client.close()
+
+    asyncio.run(apply())
+
+
+@pytest.fixture
+async def mongo() -> AsyncIterator[Collections]:
+    client = create_client(make_settings(), uri=MIGRATOR_URI)
+    try:
+        yield Collections.of(client[MONGO_DB])
+    finally:
+        await client.close()
 
 
 @pytest.fixture(autouse=True)
-async def _clean_state() -> None:
-    conn = await asyncpg.connect(MIGRATOR_DSN)
-    try:
-        await conn.execute("TRUNCATE " + ", ".join(TABLES) + " CASCADE")
-    finally:
-        await conn.close()
+async def _clean_state(mongo: Collections) -> None:
+    db = mongo.users.database
+    for spec in SPECS:
+        await db[spec.name].delete_many({})
     import redis.asyncio as aioredis
 
     r = aioredis.Redis.from_url(REDIS_URL)
     await r.flushdb()
     await r.aclose()
-
-
-@pytest.fixture
-async def migrator_conn() -> AsyncIterator[asyncpg.Connection]:
-    conn = await asyncpg.connect(MIGRATOR_DSN)
-    try:
-        yield conn
-    finally:
-        await conn.close()
 
 
 @pytest.fixture
@@ -213,39 +212,56 @@ def refresh_cookie_of(resp: httpx.Response) -> str:
 
 
 async def create_user(
-    conn: asyncpg.Connection,
+    db: Collections,
     email: str,
     *,
     password_hash: str | None = None,
     is_verified: bool = False,
     is_active: bool = True,
+    role: str = ROLE_CUSTOMER,
+    local_identity: bool = False,
 ) -> uuid.UUID:
-    user_id = uuid.uuid4()
-    await conn.execute(
-        "INSERT INTO users (id, email, password_hash, is_verified, is_active) "
-        "VALUES ($1, $2, $3, $4, $5)",
-        user_id,
-        email,
-        password_hash,
-        is_verified,
-        is_active,
+    now = utcnow()
+    doc = user_document(
+        email=email,
+        password_hash=password_hash,
+        is_verified=is_verified,
+        identities=[identity_document(PROVIDER_LOCAL, email, now)] if local_identity else [],
+        now=now,
+        role=role,
     )
+    doc["isActive"] = is_active
+    await db.users.insert_one(doc)
+    user_id: uuid.UUID = doc["_id"]
     return user_id
 
 
 async def grant(
-    conn: asyncpg.Connection,
+    db: Collections,
     user_id: uuid.UUID,
     product_code: str = "launcher_core",
     *,
     is_enabled: bool = True,
     valid_until: datetime | None = None,
 ) -> None:
-    await conn.execute(
-        "INSERT INTO entitlements (user_id, product_code, is_enabled, valid_until) "
-        "VALUES ($1, $2, $3, $4)",
-        user_id,
-        product_code,
-        is_enabled,
-        valid_until,
-    )
+    entitlement = {
+        "productCode": product_code,
+        "isEnabled": is_enabled,
+        "validUntil": valid_until,
+        "createdAt": utcnow(),
+    }
+    await db.users.update_one({"_id": user_id}, {"$push": {"entitlements": entitlement}})
+
+
+async def only_user_id(db: Collections) -> uuid.UUID:
+    users = await db.users.find({}, {"_id": 1}).to_list()
+    assert len(users) == 1, users
+    user_id: uuid.UUID = users[0]["_id"]
+    return user_id
+
+
+async def one(collection: Any, query: dict[str, Any] | None = None) -> dict[str, Any]:
+    docs = await collection.find(query or {}).to_list()
+    assert len(docs) == 1, docs
+    doc: dict[str, Any] = docs[0]
+    return doc

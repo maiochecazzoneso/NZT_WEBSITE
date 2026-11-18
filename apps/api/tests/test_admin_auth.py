@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncpg
 import httpx
 
+from app.db import Collections
 from app.security.passwords import PasswordService
 from tests.conftest import create_user, login
 from tests.helpers import STRONG_PASSWORD, DPoPKey
@@ -14,11 +14,10 @@ CUSTOMER = "user@domain.com"
 COOKIE = "__Secure-admin-refresh-token"
 
 
-async def _seed(conn: asyncpg.Connection) -> None:
+async def _seed(db: Collections) -> None:
     pw_hash = await PasswordService(max_concurrency=1).hash(STRONG_PASSWORD)
-    admin_id = await create_user(conn, ADMIN, password_hash=pw_hash, is_verified=True)
-    await conn.execute("UPDATE users SET role='admin' WHERE id=$1", admin_id)
-    await create_user(conn, CUSTOMER, password_hash=pw_hash, is_verified=True)
+    await create_user(db, ADMIN, password_hash=pw_hash, is_verified=True, role="admin")
+    await create_user(db, CUSTOMER, password_hash=pw_hash, is_verified=True)
 
 
 async def admin_login(
@@ -50,8 +49,8 @@ async def _me(client: httpx.AsyncClient, key: DPoPKey, token: str) -> httpx.Resp
     )
 
 
-async def test_admin_login_and_me(client: httpx.AsyncClient, migrator_conn: asyncpg.Connection):
-    await _seed(migrator_conn)
+async def test_admin_login_and_me(client: httpx.AsyncClient, mongo: Collections):
+    await _seed(mongo)
     key = DPoPKey()
     resp = await admin_login(client, key, ADMIN)
     assert resp.status_code == 200, resp.text
@@ -64,38 +63,34 @@ async def test_admin_login_and_me(client: httpx.AsyncClient, migrator_conn: asyn
     assert me.json() == {"email": ADMIN}
 
 
-async def test_customer_cannot_use_admin_login(
-    client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
-):
-    await _seed(migrator_conn)
+async def test_customer_cannot_use_admin_login(client: httpx.AsyncClient, mongo: Collections):
+    await _seed(mongo)
     resp = await admin_login(client, DPoPKey(), CUSTOMER)
     assert resp.status_code == 401
     assert resp.json() == {"detail": "Invalid email or password"}
     assert not [h for h in resp.headers.get_list("set-cookie") if h.startswith(COOKIE)]
 
 
-async def test_wrong_password_same_message(
-    client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
-):
-    await _seed(migrator_conn)
+async def test_wrong_password_same_message(client: httpx.AsyncClient, mongo: Collections):
+    await _seed(mongo)
     resp = await admin_login(client, DPoPKey(), ADMIN, "wrong-password")
     assert resp.status_code == 401
     assert resp.json() == {"detail": "Invalid email or password"}
 
 
 async def test_customer_token_is_rejected_on_admin_routes(
-    client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
+    client: httpx.AsyncClient, mongo: Collections
 ):
-    await _seed(migrator_conn)
+    await _seed(mongo)
     key = DPoPKey()
     token = (await login(client, key, CUSTOMER)).json()["access_token"]
     assert (await _me(client, key, token)).status_code == 403
 
 
 async def test_admin_can_also_log_in_as_customer_but_cookies_do_not_mix(
-    client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
+    client: httpx.AsyncClient, mongo: Collections
 ):
-    await _seed(migrator_conn)
+    await _seed(mongo)
     key = DPoPKey()
     admin = await admin_login(client, key, ADMIN)
     customer = await login(client, DPoPKey(), ADMIN)  # same account, customer portal entrance
@@ -109,19 +104,17 @@ async def test_admin_can_also_log_in_as_customer_but_cookies_do_not_mix(
 
 
 async def test_demoted_admin_loses_access_immediately(
-    client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
+    client: httpx.AsyncClient, mongo: Collections
 ):
-    await _seed(migrator_conn)
+    await _seed(mongo)
     key = DPoPKey()
     token = (await admin_login(client, key, ADMIN)).json()["access_token"]
-    await migrator_conn.execute("UPDATE users SET role='customer' WHERE email=$1", ADMIN)
+    await mongo.users.update_one({"email": ADMIN}, {"$set": {"role": "customer"}})
     assert (await _me(client, key, token)).status_code == 403
 
 
-async def test_admin_refresh_and_logout(
-    client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
-):
-    await _seed(migrator_conn)
+async def test_admin_refresh_and_logout(client: httpx.AsyncClient, mongo: Collections):
+    await _seed(mongo)
     key = DPoPKey()
     first = await admin_login(client, key, ADMIN)
     raw = _cookie(first).split(";", 1)[0].split("=", 1)[1]
@@ -142,3 +135,22 @@ async def test_admin_refresh_and_logout(
         path, headers={"DPoP": key.proof("POST", path), "Cookie": f"{COOKIE}={new_raw}"}
     )
     assert again.status_code == 401
+
+
+async def test_demoted_admin_cannot_refresh_admin_session(
+    client: httpx.AsyncClient, mongo: Collections
+):
+    await _seed(mongo)
+    key = DPoPKey()
+    raw = _cookie(await admin_login(client, key, ADMIN)).split(";", 1)[0].split("=", 1)[1]
+    await mongo.users.update_one({"email": ADMIN}, {"$set": {"role": "customer"}})
+    path = "/api/v1/admin/auth/refresh"
+    client.cookies.clear()
+    resp = await client.post(
+        path, headers={"DPoP": key.proof("POST", path), "Cookie": f"{COOKIE}={raw}"}
+    )
+    assert resp.status_code == 401
+    assert resp.json() == {"detail": "Invalid refresh token"}
+    fam = await mongo.families.find_one({})
+    assert fam is not None
+    assert (fam["isRevoked"], fam["revokedReason"]) == (True, "user_not_allowed")

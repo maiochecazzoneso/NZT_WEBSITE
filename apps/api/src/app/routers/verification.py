@@ -18,10 +18,8 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, Request
 from fastapi.responses import JSONResponse, Response
-from sqlalchemy import select
 
-from app.deps import CurrentUser, DbSession, ServicesDep
-from app.models import User
+from app.deps import CurrentUser, ServicesDep
 from app.ratelimit import (
     RESEND_VERIFICATION_PER_IP,
     RESEND_VERIFICATION_PER_USER,
@@ -63,12 +61,11 @@ async def _rl_resend_ip(request: Request, services: ServicesDep) -> None:
     responses={400: {"model": ErrorResponse, "description": "Generic token failure"}, **_429},
     dependencies=[Depends(_rl_verify)],
 )
-async def verify_email(db: DbSession, payload: Annotated[VerifyEmailRequest, Body()]) -> Response:
-    user_id = await consume_verification_token(db, payload.token)
-    if user_id is None:
-        await db.rollback()
+async def verify_email(
+    services: ServicesDep, payload: Annotated[VerifyEmailRequest, Body()]
+) -> Response:
+    if await consume_verification_token(services.db, payload.token) is None:
         return JSONResponse(status_code=400, content={"detail": INVALID_VERIFICATION_TOKEN})
-    await db.commit()
     return Response(status_code=204)
 
 
@@ -82,16 +79,13 @@ async def verify_email(db: DbSession, payload: Annotated[VerifyEmailRequest, Bod
     },
     dependencies=[Depends(_rl_resend_ip)],
 )
-async def resend_verification(services: ServicesDep, db: DbSession, user: CurrentUser) -> Response:
+async def resend_verification(services: ServicesDep, user: CurrentUser) -> Response:
     await services.rate_limiter.hit(RESEND_VERIFICATION_PER_USER, str(user.id))
-    verified = await db.execute(select(User.is_verified).where(User.id == user.id))
-    if verified.scalar_one() is True:
-        await db.rollback()
+    if user.is_verified:  # read from the database by the authentication of this request
         return Response(status_code=204)
     raw_token = await issue_verification_token(
-        db, user.id, ttl_seconds=services.settings.email_verification_ttl_seconds
+        services.db, user.id, ttl_seconds=services.settings.email_verification_ttl_seconds
     )
-    await db.commit()
     message = verification_email(services.settings, to=user.email, raw_token=raw_token)
     if not await deliver(services.mailer, message):
         return JSONResponse(status_code=503, content={"detail": EMAIL_DELIVERY_FAILED})
@@ -103,6 +97,5 @@ async def resend_verification(services: ServicesDep, db: DbSession, user: Curren
     response_model=MeResponse,
     responses={401: {"model": ErrorResponse, "description": "Not authenticated (DPoP)"}},
 )
-async def me(db: DbSession, user: CurrentUser) -> MeResponse:
-    result = await db.execute(select(User.is_verified).where(User.id == user.id))
-    return MeResponse(email=user.email, is_verified=bool(result.scalar_one()))
+async def me(user: CurrentUser) -> MeResponse:
+    return MeResponse(email=user.email, is_verified=user.is_verified)

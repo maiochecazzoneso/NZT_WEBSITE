@@ -12,20 +12,25 @@ import hashlib
 import json
 import logging
 import re
+import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import asyncpg
 import httpx
 import pytest
 from fastapi import FastAPI
 from pydantic import ValidationError
+from pymongo.errors import WriteError
 
+from app.db import Collections
 from tests.conftest import (
     ClientFactory,
     download,
     grant,
     login,
     make_settings,
+    one,
+    only_user_id,
     refresh,
     refresh_cookie_of,
     register,
@@ -83,7 +88,7 @@ async def _registered(client: httpx.AsyncClient, email: str = "user@domain.com")
 
 # --- registration sends the mail --------------------------------------------------------
 async def test_registration_sends_exactly_one_mail_with_fragment_link(
-    app: FastAPI, client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
+    app: FastAPI, client: httpx.AsyncClient, mongo: Collections
 ):
     await _registered(client, email="  New.User@Domain.COM ")
     sent = outbox(app)
@@ -99,13 +104,12 @@ async def test_registration_sends_exactly_one_mail_with_fragment_link(
     assert "Se non hai creato tu questo account ignora questa email" in msg.text
     assert "24 ore" in msg.text
     raw = token_of(msg)
-    rows = await migrator_conn.fetch("SELECT * FROM email_verification_tokens")
-    assert len(rows) == 1
-    row = rows[0]
-    assert row["token_hash"] == hashlib.sha256(raw.encode()).hexdigest()
-    assert raw not in json.dumps({k: str(v) for k, v in dict(row).items()})
-    assert row["used_at"] is None
-    lifetime = (row["expires_at"] - row["created_at"]).total_seconds()
+    row = await one(mongo.email_tokens)
+    assert row["_id"] == hashlib.sha256(raw.encode()).hexdigest()
+    assert row["userId"] == await only_user_id(mongo)
+    assert raw not in json.dumps({k: str(v) for k, v in row.items()})
+    assert row["usedAt"] is None
+    lifetime = (row["expiresAt"] - row["createdAt"]).total_seconds()
     assert 86_390 <= lifetime <= 86_410
 
 
@@ -134,21 +138,21 @@ async def test_failed_registration_sends_nothing(app: FastAPI, client_factory: C
 
 # --- token lifecycle ------------------------------------------------------------------
 async def test_verify_valid_token_is_single_use(
-    app: FastAPI, client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
+    app: FastAPI, client: httpx.AsyncClient, mongo: Collections
 ):
     await _registered(client)
     raw = token_of(outbox(app)[0])
     ok = await verify(client, raw)  # no DPoP, no Authorization: public endpoint
     assert ok.status_code == 204
-    assert await migrator_conn.fetchval("SELECT is_verified FROM users") is True
-    assert await migrator_conn.fetchval("SELECT used_at FROM email_verification_tokens")
+    assert (await one(mongo.users))["isVerified"] is True
+    assert (await one(mongo.email_tokens))["usedAt"] is not None
     again = await verify(client, raw)
     assert again.status_code == 400
     assert again.json() == GENERIC_400
 
 
 async def test_verify_unknown_tampered_malformed_expired_are_one_generic_400(
-    app: FastAPI, client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
+    app: FastAPI, client: httpx.AsyncClient, mongo: Collections
 ):
     await _registered(client)
     raw = token_of(outbox(app)[0])
@@ -156,12 +160,12 @@ async def test_verify_unknown_tampered_malformed_expired_are_one_generic_400(
     for bad in (tampered, "x" * 43, "not-a-token", "%2e%2e/" + raw[:30], raw + "A"):
         resp = await verify(client, bad)
         assert (resp.status_code, resp.json()) == (400, GENERIC_400), bad
-    await migrator_conn.execute(
-        "UPDATE email_verification_tokens SET expires_at = now() - interval '1 second'"
+    await mongo.email_tokens.update_many(
+        {}, {"$set": {"expiresAt": datetime.now(UTC) - timedelta(seconds=1)}}
     )
     expired = await verify(client, raw)
     assert (expired.status_code, expired.json()) == (400, GENERIC_400)
-    assert await migrator_conn.fetchval("SELECT is_verified FROM users") is False
+    assert (await one(mongo.users))["isVerified"] is False
     oversized = await client.post(VERIFY, json={"token": "a" * 129})
     assert oversized.status_code == 422
 
@@ -185,7 +189,7 @@ async def test_resend_requires_dpop_authentication(client: httpx.AsyncClient):
 
 
 async def test_resend_invalidates_previous_token(
-    app: FastAPI, client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
+    app: FastAPI, client: httpx.AsyncClient, mongo: Collections
 ):
     key, token, _ = await _registered(client)
     first = token_of(outbox(app)[0])
@@ -194,7 +198,7 @@ async def test_resend_invalidates_previous_token(
     second = token_of(outbox(app)[1])
     assert outbox(app)[1].to == "user@domain.com"  # always the authenticated user's email
     assert second != first
-    assert await migrator_conn.fetchval("SELECT count(*) FROM email_verification_tokens") == 1
+    assert await mongo.email_tokens.count_documents({}) == 1
     assert (await verify(client, first)).status_code == 400
     assert (await verify(client, second)).status_code == 204
 
@@ -242,12 +246,11 @@ async def test_me_contract(app: FastAPI, client: httpx.AsyncClient):
 
 # --- no new restrictions on unverified accounts ----------------------------------------
 async def test_unverified_local_account_keeps_login_refresh_and_download(
-    client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
+    client: httpx.AsyncClient, mongo: Collections
 ):
     key, _, cookie = await _registered(client)
-    user_id = await migrator_conn.fetchval("SELECT id FROM users")
-    await grant(migrator_conn, user_id)
-    assert await migrator_conn.fetchval("SELECT is_verified FROM users") is False
+    await grant(mongo, await only_user_id(mongo))
+    assert (await one(mongo.users))["isVerified"] is False
     rotated = await refresh(client, key, cookie)
     assert rotated.status_code == 200
     assert (await download(client, key, rotated.json()["access_token"])).status_code == 200
@@ -261,7 +264,7 @@ async def test_unverified_local_account_keeps_login_refresh_and_download(
 async def test_prehijack_google_takeover_kills_attacker(
     client_factory: ClientFactory,
     fake_google: FakeGoogle,
-    migrator_conn: asyncpg.Connection,
+    mongo: Collections,
 ):
     attacker = client_factory("198.51.100.66")
     victim = client_factory("203.0.113.99")
@@ -284,23 +287,19 @@ async def test_prehijack_google_takeover_kills_attacker(
     victim_at = resp.json()["access_token"]
 
     # 3. Account state: no password, no local identity, verified, Google linked.
-    user = await migrator_conn.fetchrow("SELECT * FROM users")
-    assert user["password_hash"] is None
-    assert user["is_verified"] is True
-    idents = await migrator_conn.fetch("SELECT provider, provider_user_id FROM auth_identities")
-    assert [tuple(r) for r in idents] == [("google", "g-victim")]
-    fams = await migrator_conn.fetch(
-        "SELECT dpop_jkt, is_revoked, revoked_reason FROM refresh_token_families"
-    )
-    by_jkt = {r["dpop_jkt"]: r for r in fams}
+    user = await one(mongo.users)
+    assert user["passwordHash"] is None
+    assert user["isVerified"] is True
+    assert [(i["provider"], i["providerUserId"]) for i in user["identities"]] == [
+        ("google", "g-victim")
+    ]
+    fams = await mongo.families.find({}).to_list()
+    by_jkt = {r["dpopJkt"]: r for r in fams}
     for k in (key_a, key_b):
-        assert by_jkt[k.thumbprint]["is_revoked"] is True
-        assert by_jkt[k.thumbprint]["revoked_reason"] == "google_takeover"
-    assert sum(1 for r in fams if not r["is_revoked"]) == 1  # the victim's new session
-    pending = await migrator_conn.fetchval(
-        "SELECT count(*) FROM email_verification_tokens WHERE used_at IS NULL"
-    )
-    assert pending == 0
+        assert by_jkt[k.thumbprint]["isRevoked"] is True
+        assert by_jkt[k.thumbprint]["revokedReason"] == "google_takeover"
+    assert sum(1 for r in fams if not r["isRevoked"]) == 1  # the victim's new session
+    assert await mongo.email_tokens.count_documents({"usedAt": None}) == 0
 
     # 4. Every attacker credential is dead immediately.
     relogin = await login(attacker, DPoPKey(), email=VICTIM, password=ATTACKER_PASSWORD)
@@ -323,7 +322,7 @@ async def test_prehijack_takeover_victim_session_is_usable(
     app: FastAPI,
     client_factory: ClientFactory,
     fake_google: FakeGoogle,
-    migrator_conn: asyncpg.Connection,
+    mongo: Collections,
 ):
     """Same takeover, driving the Google callback with a known DPoP key so the victim's
     new access token and refresh cookie can be exercised right after the revocation."""
@@ -364,7 +363,7 @@ async def test_verified_local_account_is_linked_not_taken_over(
     app: FastAPI,
     client_factory: ClientFactory,
     fake_google: FakeGoogle,
-    migrator_conn: asyncpg.Connection,
+    mongo: Collections,
 ):
     owner = client_factory("203.0.113.50")
     key, token, cookie = await _registered(owner, email="owner@domain.com")
@@ -373,53 +372,52 @@ async def test_verified_local_account_is_linked_not_taken_over(
         owner, fake_google, {"sub": "g-owner", "email": "owner@domain.com", "email_verified": True}
     )
     assert resp.status_code == 200
-    assert await migrator_conn.fetchval("SELECT password_hash IS NOT NULL FROM users") is True
-    providers = await migrator_conn.fetch("SELECT provider FROM auth_identities ORDER BY provider")
-    assert [r["provider"] for r in providers] == ["google", "local"]
+    user = await one(mongo.users)
+    assert user["passwordHash"] is not None
+    assert sorted(i["provider"] for i in user["identities"]) == ["google", "local"]
     # Existing local sessions are untouched, password login still works.
-    assert (
-        await migrator_conn.fetchval("SELECT count(*) FROM refresh_token_families WHERE is_revoked")
-        == 0
-    )
+    assert await mongo.families.count_documents({"isRevoked": True}) == 0
     assert (await authed(owner, key, "GET", ME, token)).status_code == 200
     assert (await refresh(owner, key, cookie)).status_code == 200
     assert (await login(owner, DPoPKey(), email="owner@domain.com")).status_code == 200
 
 
 async def test_google_takeover_requires_email_verified_true(
-    client: httpx.AsyncClient, fake_google: FakeGoogle, migrator_conn: asyncpg.Connection
+    client: httpx.AsyncClient, fake_google: FakeGoogle, mongo: Collections
 ):
     await _registered(client, email="victim2@domain.com")
     resp = await _flow(
         client, fake_google, {"sub": "g-x", "email": "victim2@domain.com", "email_verified": False}
     )
     assert resp.status_code == 400
-    assert await migrator_conn.fetchval("SELECT password_hash IS NOT NULL FROM users") is True
+    assert (await one(mongo.users))["passwordHash"] is not None
     assert await login(client, DPoPKey(), email="victim2@domain.com", password=STRONG_PASSWORD)
 
 
 # --- database -------------------------------------------------------------------------
-async def test_verification_table_privileges_and_schema(migrator_conn: asyncpg.Connection):
-    privs = await migrator_conn.fetch(
-        "SELECT privilege_type FROM information_schema.role_table_grants "
-        "WHERE grantee = 'nzt_app' AND table_name = 'email_verification_tokens'"
-    )
-    assert {r["privilege_type"] for r in privs} == {"SELECT", "INSERT", "UPDATE", "DELETE"}
-    cols = {
-        r["column_name"]: r
-        for r in await migrator_conn.fetch(
-            "SELECT column_name, is_nullable, data_type, character_maximum_length "
-            "FROM information_schema.columns WHERE table_name = 'email_verification_tokens'"
-        )
+async def test_verification_collection_schema(mongo: Collections):
+    """Only the SHA-256 of the token can be stored (validator), and the TTL index removes
+    expired tokens."""
+    now = datetime.now(UTC)
+    good = {
+        "_id": "a" * 64,
+        "userId": uuid.uuid4(),
+        "expiresAt": now,
+        "usedAt": None,
+        "createdAt": now,
     }
-    assert set(cols) == {"id", "user_id", "token_hash", "expires_at", "used_at", "created_at"}
-    assert cols["token_hash"]["character_maximum_length"] == 64
-    assert cols["used_at"]["is_nullable"] == "YES"
-    fk = await migrator_conn.fetchval(
-        "SELECT confdeltype::text FROM pg_constraint "
-        "WHERE conrelid = 'email_verification_tokens'::regclass AND contype = 'f'"
-    )
-    assert fk == "c"  # ON DELETE CASCADE
+    await mongo.email_tokens.insert_one(good)
+    for bad in (
+        {**good, "_id": "plain-text-token-must-never-be-stored-xxxxxxx"},  # not a hash
+        {**good, "_id": "b" * 64, "userId": "not-a-uuid"},
+        {**good, "_id": "c" * 64, "extra": 1},
+        {k: v for k, v in {**good, "_id": "d" * 64}.items() if k != "expiresAt"},
+    ):
+        with pytest.raises(WriteError):
+            await mongo.email_tokens.insert_one(bad)
+    indexes = {i["name"]: i async for i in await mongo.email_tokens.list_indexes()}
+    assert indexes["expires_ttl"]["expireAfterSeconds"] == 0
+    assert dict(indexes["user"]["key"]) == {"userId": 1}
 
 
 # --- mailer configuration and Resend request shape --------------------------------------
@@ -428,7 +426,6 @@ _PROD: dict[str, Any] = {
     "access_token_private_key_pem": "x",
     "oauth_state_key": base64.urlsafe_b64encode(b"k" * 32).decode().rstrip("="),
     "launcher_sha256": "ab" * 32,
-    "database_sslmode": "verify-full",
     "trusted_proxy_cidrs": ["10.0.0.0/8"],
     "mail_backend": "resend",
     "resend_api_key": "re_test_key",
@@ -515,3 +512,29 @@ async def test_resend_mailer_request_shape_and_no_retries():
         assert "user@domain.com" not in str(exc.value)
         assert "Corpo" not in str(exc.value)
     await mailer.aclose()
+
+
+async def test_login_racing_a_takeover_never_keeps_a_session(
+    app: FastAPI, client: httpx.AsyncClient, mongo: Collections
+):
+    """The password login re-checks the password AFTER creating its session. Simulate a
+    Google takeover removing the password exactly between the Argon2 verification and
+    that re-check: the login must fail and its new session must be revoked."""
+    await _registered(client, email="race@domain.com")
+    sessions = app.state.services.sessions
+    original = sessions.create_session
+
+    async def create_then_takeover(**kwargs: Any) -> Any:
+        issued = await original(**kwargs)
+        await mongo.users.update_many({}, {"$set": {"passwordHash": None, "isVerified": True}})
+        return issued
+
+    sessions.create_session = create_then_takeover
+    try:
+        resp = await login(client, DPoPKey(), email="race@domain.com")
+    finally:
+        sessions.create_session = original
+    assert resp.status_code == 401
+    assert "set-cookie" not in resp.headers
+    newest = await mongo.families.find({}).sort("createdAt", -1).limit(1).to_list()
+    assert (newest[0]["isRevoked"], newest[0]["revokedReason"]) == (True, "credentials_changed")

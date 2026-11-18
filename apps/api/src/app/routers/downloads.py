@@ -8,14 +8,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
 
+from app.db import utcnow
 from app.deps import (
     AuthenticatedUser,
     CurrentUser,
-    DbSession,
     ServicesDep,
     require_entitlement,
 )
-from app.models import DownloadLog
 from app.ratelimit import DOWNLOADS_PER_USER
 from app.schemas import DownloadResponse, ErrorResponse
 from app.services.storage import PRESIGNED_URL_TTL_SECONDS, Product, artifact_catalog
@@ -43,23 +42,23 @@ async def rate_limit_downloads(user: CurrentUser, services: ServicesDep) -> None
 async def download_launcher(
     request: Request,
     services: ServicesDep,
-    db: DbSession,
     user: Annotated[AuthenticatedUser, Depends(require_entitlement(Product.LAUNCHER_CORE.value))],
 ) -> DownloadResponse:
     artifact = artifact_catalog(services.settings)[Product.LAUNCHER_CORE]
     download_token_id = secrets.token_hex(16)
     user_agent = request.headers.get("user-agent")
-    db.add(
-        DownloadLog(
-            id=uuid.uuid4(),
-            user_id=user.id,
-            product_code=artifact.product.value,
-            ip_address=services.client_ip.for_request(request),
-            user_agent=user_agent[:_MAX_USER_AGENT] if user_agent else None,
-            download_token_id=download_token_id,
-        )
+    # Audit row acknowledged by the replica-set majority BEFORE the URL is handed out.
+    await services.db.download_logs.insert_one(
+        {
+            "_id": uuid.uuid4(),
+            "userId": user.id,
+            "productCode": artifact.product.value,
+            "ipAddress": services.client_ip.for_request(request),
+            "userAgent": user_agent[:_MAX_USER_AGENT] if user_agent else None,
+            "downloadTokenId": download_token_id,
+            "createdAt": utcnow(),
+        }
     )
-    await db.commit()  # audit row is durable BEFORE the URL is handed out
     return DownloadResponse(
         download_url=services.presigner.presign_get(artifact),
         sha256=artifact.sha256,

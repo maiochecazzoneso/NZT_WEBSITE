@@ -3,7 +3,7 @@
 > **Progetto:** Sito Web Ufficiale (`nztsolutions.it`) e futura Area Clienti (`clienti.nztsolutions.it`)  
 > **Modello:** Zero-Trust, minimo privilegio, difesa in profondità  
 > **Standard di conformità:** OWASP Top 10 (2021) • OWASP API Security Top 10 (2023) • CIS Benchmarks  
-> **Ultimo aggiornamento:** 2026-11-15 — vedi [Registro delle modifiche](#15-registro-delle-modifiche)
+> **Ultimo aggiornamento:** 2026-11-18 — vedi [Registro delle modifiche](#15-registro-delle-modifiche)
 
 Questo è il documento **vincolante** per tutto ciò che riguarda la sicurezza del progetto. Contiene due cose
 insieme: le **regole** (il blueprint) e lo **stato reale** della loro applicazione nel repository.
@@ -49,7 +49,7 @@ solo il sito: lo stack reale è più piccolo, e questo riduce la superficie d'at
 
 | § | Regola | Stato | Dove |
 | :-- | :-- | :-: | :-- |
-| 1.1 | Nessun database con endpoint pubblico; solo rete privata Railway | ⏳ | — |
+| 1.1 | Nessun database con endpoint pubblico; solo rete privata Railway (MongoDB esterno: database per servizio, IP Access List, TLS verificato) | ✅ Redis · 🔧 IP Access List del cluster MongoDB | `apps/api/src/app/config.py` (guardie TLS) |
 | 1.2 | Origin IP cloaking: l'origine risponde solo a Cloudflare (`X-Origin-Verify`) | ✅ codice · 🔧 attivazione | `server/create-server.mjs`, `server/origin-verify.mjs` |
 | 1.2 | IP del client ricavato solo da proxy verificati | ✅ | `server/client-ip.mjs` |
 | 1.2 | Proxy Cloudflare, WAF, TLS minimo, DNSSEC, CAA | 🔧 | Cloudflare / registrar |
@@ -57,7 +57,7 @@ solo il sito: lo stack reale è più piccolo, e questo riduce la superficie d'at
 | 2.2 | Security header su **ogni** risposta, CSP senza `unsafe-inline`/`unsafe-eval` per gli script | ✅ | `server/security-headers.mjs`, `server/csp-hashes.mjs`, `src/middleware.ts` |
 | 2.3 | Nessun `set:html` / `dangerouslySetInnerHTML` con dati non fidati | ✅ (nessun uso nel codice) | — |
 | 3.1 | Validazione a schema rigoroso, chiavi extra rifiutate | ✅ (Zod strict) · ⏳ Pydantic | `src/lib/contact-schema.ts` |
-| 3.2 | Query parametrizzate, anti-IDOR/BOLA, anti NoSQL-injection | ⏳ | — |
+| 3.2 | Query parametrizzate, anti-IDOR/BOLA, anti NoSQL-injection | ✅ Area Clienti (MongoDB, scenario B) | `apps/api/src/app/db.py`, `apps/api/src/app/schema.py`, `apps/api/tests/test_mongo.py` |
 | 3.3 | Mitigazione SSRF | ✅ (solo host costanti) · ⏳ validazione IP | `src/lib/turnstile.ts`, `src/lib/email.ts` |
 | 3.4 | Rate limiting degli endpoint critici | ✅ in memoria · ⏳ Redis con più repliche | `src/lib/security/rate-limit.ts` |
 | 4 | Argon2id, cookie HttpOnly, rotazione refresh token | ⏳ | — |
@@ -80,7 +80,18 @@ solo il sito: lo stack reale è più piccolo, e questo riduce la superficie d'at
   - MongoDB: `mongodb.railway.internal:27017` (via `${{MongoDB.MONGO_URL}}`)
   - Redis: `redis.railway.internal:6379` (via `${{Redis.REDIS_URL}}`)
 
-**Stato.** Il progetto non ha database. La regola si applica dal primo servizio dati aggiunto su Railway.
+**Stato.** Il sito pubblico non ha database. L'Area Clienti (`apps/api`) usa Redis sulla rete privata Railway e un
+**MongoDB esterno** (cluster condiviso tra i servizi NZT per avere un solo servizio database da pagare), che per
+definizione non è sulla rete privata Railway. Per quel cluster la regola diventa:
+
+- **un database per servizio** e utenti limitati a quel database (l'API usa un ruolo custom con sole operazioni
+  CRUD sulle proprie collection, schema applicato da un utente separato);
+- **IP Access List** del cluster limitata agli IP di uscita dei servizi (o private endpoint / peering), mai
+  `0.0.0.0/0`;
+- **TLS obbligatorio** con verifica di certificato e hostname e autenticazione SCRAM: l'API rifiuta di avviarsi in
+  produzione con un URI senza credenziali o con opzioni che indeboliscono TLS.
+
+Dettagli e verifiche: `docs/architettura_sicurezza_area_clienti.md` §16.
 
 ### 1.2 Origin IP Cloaking e WAF Cloudflare
 
@@ -323,6 +334,9 @@ async def get_user_order(db: AsyncSession, order_id: uuid.UUID, current_user_id:
 - **NoSQL operator injection:** mai accettare dizionari liberi (`dict`) nei filtri di query.
 - Validare i tipi con Pydantic garantendo parametri scalari (`str`, `int`), così che l'utente non possa
   iniettare operatori come `{"$gt": ""}` o `{"$ne": null}`.
+- **Applicato nell'Area Clienti (`apps/api`, PyMongo async):** filtri costruiti solo da valori tipizzati lato
+  server, nessun operatore JavaScript lato server, validatori `$jsonSchema` strict su ogni collection, `_id` UUID
+  (non enumerabili); verificato da `apps/api/tests/test_mongo.py`.
 
 ```python
 # VULNERABILE:
@@ -797,4 +811,5 @@ Requisiti obbligatori per ogni frammento di codice che generi:
 
 | Data | Modifica |
 | :-- | :-- |
+| 2026-11-18 | **Area Clienti: database da PostgreSQL a MongoDB esterno** (decisione: un solo servizio database condiviso tra i servizi NZT). §1.1: regola di isolamento per un cluster esterno (database per servizio, IP Access List, TLS verificato obbligatorio). §3.2 scenario B applicato. Dettagli nel documento dell'Area Clienti (§5, §9, §16, §24.2). |
 | 2026-11-15 | **Prima stesura e prima applicazione del blueprint.** Perimetro di produzione `server/index.mjs` (verifica dell'origine, allowlist di metodi e path, limiti sul corpo, IP da proxy verificati). Security header e CSP a hash su ogni risposta. API contatti: schema strict, controllo stessa origine, rate limiter a memoria limitata con tetto globale, log JSON senza dati personali. Aggiornamento Astro 5 → 7 e dipendenze vulnerabili; rimozione dell'SDK Resend. Container multi-stage non-root su Alpine senza `node_modules`. Pipeline `Security` (Gitleaks, audit, test, Trivy), Dependabot, hook pre-commit. Pagina 404, `security.txt`. 111 test di sicurezza. |

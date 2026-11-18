@@ -1,7 +1,7 @@
 # NZT Solutions — Area Clienti: Architettura di Sicurezza (v1.0)
 
 > **Ambito:** Area Clienti `clienti.nztsolutions.it` (portale) + API `api.nztsolutions.it` + distribuzione del Launcher
-> **Stato:** descrive il sistema **come implementato** sul branch `implementazione-area-clienti` (commit `2ab0e83` backend, `72e70ea` portale e `packages/ui`)
+> **Stato:** descrive il sistema **come implementato** sul branch `implementazione-area-clienti` (commit `2ab0e83` backend, `72e70ea` portale e `packages/ui`; database migrato da PostgreSQL a **MongoDB esterno** il 2026-11-18, §5 e §16)
 > **Documento di riferimento originale:** [`specifiche_architetturali_area_clienti_nzt_solutions.md`](./specifiche_architetturali_area_clienti_nzt_solutions.md) (di seguito "la specifica")
 > **Autorità:** in caso di disaccordo tra questo documento e il codice, vale il codice; i riferimenti a file (`apps/api/src/app/...`) permettono la verifica puntuale.
 
@@ -30,10 +30,10 @@ Marcatori usati nelle tabelle:
 | Livello | Tecnologia (versioni risolte nei lockfile) | Ruolo di sicurezza |
 | :--- | :--- | :--- |
 | **API** | Python 3.12 (`.python-version`), FastAPI 0.163 / Starlette 1.10, uvicorn 0.54 | Autenticazione, sessioni, autorizzazione, download |
-| **ORM / driver** | SQLAlchemy 2.1 async + asyncpg 0.32, Alembic 1.20 | Query parametrizzate (prepared statements), migrazioni |
+| **Driver DB** | PyMongo 4.20 (API asyncio nativa `AsyncMongoClient`) | Filtri costruiti solo da valori tipizzati lato server, validatori `$jsonSchema`, schema applicato da un utente separato (`app/schema.py`) |
 | **Crittografia** | argon2-cffi 25.1, PyJWT 2.15 [crypto], cryptography 50.0 | Argon2id, JWT EdDSA, verifica DPoP ES256, AES-256-GCM |
 | **Cache / limiti** | Redis 7 (client redis-py 8.1 asyncio) | Rate limit, anti-replay DPoP, marker di revoca |
-| **Database** | PostgreSQL 16 | Utenti, identità, famiglie/refresh token, entitlement, audit |
+| **Database** | MongoDB 8 esterno (cluster condiviso, es. Atlas; un database per servizio) | Utenti (con identità ed entitlement incorporati), famiglie/refresh token, token di verifica email, audit |
 | **Egress** | httpx 0.28 (solo verso Google), boto3 1.44 (solo firma locale SigV4) | OIDC Google, URL prefirmati |
 | **Portale** | React 19 + Vite 6.4 (SPA), TypeScript strict, Tailwind 4; nessun router o form library di terze parti | Token in memoria, chiave DPoP WebCrypto, Web Locks |
 | **Design system** | `packages/ui` (`@nzt/ui`): Button, Card, Badge, Input, Field, Alert, `tokens.css` | Nessuna logica di sicurezza |
@@ -52,9 +52,9 @@ apps/
     ├── src/app/security/  dpop.py, tokens.py, passwords.py, sealed.py, jose_utils.py
     ├── src/app/services/  sessions.py (RTR), google.py (OIDC), storage.py (presign)
     ├── src/app/routers/   auth.py, google.py, downloads.py, health.py
-    ├── src/app/           config.py, cookies.py, client_ip.py, ratelimit.py, middleware.py, errors.py, deps.py, main.py
-    ├── alembic/           migrazione 0001_initial_schema.py
-    └── scripts/db/        roles.sql, init-roles.sh
+    ├── src/app/           config.py, db.py (client MongoDB), schema.py (validatori + indici), cookies.py,
+    │                      client_ip.py, ratelimit.py, middleware.py, errors.py, deps.py, main.py
+    └── scripts/db/        create_roles.py (utenti MongoDB a privilegio minimo)
 packages/
 └── ui/        @nzt/ui (consumato da sorgente da landing e portal)
 ```
@@ -86,7 +86,7 @@ Il target di hosting è Railway. **Nessuna configurazione Railway, Dockerfile o 
 | Landing | `apps/landing/dist` (statico) | Pubblico, `nztsolutions.it` | Build verificata; nessuna config Railway |
 | Portale | `apps/portal/dist` (statico) | Pubblico, `clienti.nztsolutions.it` | Header pronti in `deploy/Caddyfile` (riusabile in un container Caddy) e `deploy/_headers` (Cloudflare Pages/Netlify); nessuna config Railway |
 | API | container Python, `uvicorn app.main:create_app --factory --no-proxy-headers` | Pubblico tramite edge Railway, `api.nztsolutions.it` | Codice pronto; Dockerfile assente |
-| PostgreSQL 16 | servizio gestito | **Solo rete privata** (`postgres.railway.internal`, vedi `.env.example`) | `scripts/db/roles.sql` da eseguire una volta |
+| MongoDB 8 | cluster **esterno** (es. Atlas), condiviso con gli altri servizi: un database dedicato `nzt` | **Non** sulla rete privata Railway: TLS obbligatorio con verifica di certificato e hostname, autenticazione SCRAM, IP Access List / private endpoint lato cluster (§16.3) | Utenti/ruolo da creare (§16.1, `scripts/db/create_roles.py` o UI Atlas) |
 | Redis 7 | servizio gestito | **Solo rete privata** (`redis.railway.internal`) | — |
 | Object storage | Cloudflare R2 (o S3), bucket privato `nzt-binaries` | Accesso solo con URL prefirmati | Credenziali di sola lettura da creare |
 
@@ -113,18 +113,19 @@ Il target di hosting è Railway. **Nessuna configurazione Railway, Dockerfile o 
                      │  limit ▸ CORS ▸ router    │
                      │  DPoP ▸ rate limit ▸ auth │
                      └──┬───────────┬────────┬──┘
-          rete privata  │           │        │ egress HTTPS [B4]
-          Railway [B3]  ▼           ▼        ▼ (solo URL Google configurati,
-                  PostgreSQL 16   Redis 7    nessun redirect seguito)
-                  (ruolo nzt_app  (limiti,   Google token endpoint + JWKS
-                   solo DML, TLS)  jti, marker)
+          TLS verificato│ rete      │        │ egress HTTPS [B4]
+          [B3]          ▼ privata   ▼        ▼ (solo URL Google configurati,
+                  MongoDB 8      Redis 7     nessun redirect seguito)
+                  esterno (utente (limiti,   Google token endpoint + JWKS
+                  nzt_app: solo   jti, marker)
+                  CRUD, TLS)
 ```
 
 | Confine | Cosa lo attraversa | Controlli |
 | :--- | :--- | :--- |
 | **B1** Internet → edge | Tutto il traffico | TLS terminato dall'edge Railway (**NON VERIFICATO**: versione TLS, HSTS lato edge); nessun WAF nel repository |
 | **B2** edge → API | Richieste HTTP con `X-Forwarded-For` | `X-Forwarded-For` considerato solo se il peer TCP è in `NZT_TRUSTED_PROXY_CIDRS` (§15); limite body 16 KiB; CORS solo portale; DPoP su ogni endpoint che usa cookie o token |
-| **B3** API → dati | SQL, comandi Redis | Ruolo DB solo DML, TLS `verify-full`/`verify-ca` obbligatorio in produzione, `statement_timeout=15s`; Redis su rete privata con password nella URL |
+| **B3** API → dati | Comandi MongoDB, comandi Redis | Utente MongoDB limitato a `find/insert/update/remove` sulle 5 collection dell'API, TLS con verifica di certificato **e** hostname obbligatorio in produzione (opzioni che lo indeboliscono rifiutate all'avvio), timeout client 15 s per operazione, write concern `majority`; Redis su rete privata con password nella URL |
 | **B4** API → Internet | Solo chiamate a Google (token, JWKS) | URL fissati da configurazione, `follow_redirects=False`, timeout 10 s; la firma R2 è un calcolo locale (nessun egress) |
 
 ---
@@ -143,7 +144,7 @@ Il target di hosting è Railway. **Nessuna configurazione Railway, Dockerfile o 
 | Chiave dello state OAuth (AES-256) | Variabile d'ambiente | Falsificazione dello state/verifier/nonce OAuth |
 | Credenziali storage (sola lettura) | Variabile d'ambiente | Download non autorizzato dei binari |
 | Binario del Launcher | Bucket privato | Distribuzione non autorizzata o manomessa |
-| Audit dei download (IP, User-Agent) | Tabella `download_logs` | Dato personale |
+| Audit dei download (IP, User-Agent) | Collection `downloadLogs` | Dato personale |
 
 ### 4.2 Attori
 
@@ -171,11 +172,11 @@ Riferimenti ai test: backend `apps/api/tests/<file>::<test>`, portale `apps/port
 | T6 | CSRF su endpoint con cookie | Header `DPoP` obbligatorio ⇒ preflight CORS ammesso solo dal portale; `SameSite=Strict`; i form cross-site non possono impostare header | `main.py` (CORS), `cookies.py` | `test_http_hardening::test_cors_preflight_portal_only`, `test_auth_flows::test_register_requires_dpop`, `test_auth_flows::test_logout_requires_cookie_and_dpop` |
 | T7 | CSRF / login CSRF su OAuth | `state` casuale in cookie AES-256-GCM `HttpOnly`, confronto a tempo costante; `state` **monouso** lato server (Redis `SET NX`); PKCE S256; `nonce` nell'ID token | `routers/google.py`, `security/sealed.py`, `services/google.py` | `test_google::test_state_mismatch_400`, `test_missing_or_forged_state_cookie_400`, `test_pkce_verifier_mismatch_rejected_by_idp`, `test_bad_nonce_rejected`; `test_security_fixes::test_l6_oauth_state_is_single_use` |
 | T8 | ID token Google falsificato o per altro client | Firma RS256 via JWKS Google, `iss` in allow-list, `aud` = client id, `exp`/`iat` (leeway 30 s), `email_verified` vero | `services/google.py` | `test_wrong_audience_and_issuer_rejected`, `test_expired_id_token_rejected`, `test_email_not_verified_rejected` |
-| T9 | Account pre-hijacking | Verifica email (token monouso 256 bit, solo SHA-256 nel DB, TTL 24 h, link con token nel frammento). Identità Google verificata + account locale **non verificato** ⇒ **takeover** (DEVIAZIONE da §5.3): password rimossa, identità locale eliminata, token di verifica pendenti eliminati, **tutte** le famiglie revocate + marker utente (anche dopo il commit); account locale verificato ⇒ collegamento; una sola identità Google per account (409); email Google canonicalizzata con la **stessa** funzione delle email locali | `routers/google.py::_resolve_user`, `routers/verification.py`, `services/email_verification.py`, `routers/auth.py::login` (ricontrollo dell'hash sotto lock) | `test_email_verification::test_prehijack_google_takeover_kills_attacker`, `test_prehijack_takeover_victim_session_is_usable`, `test_verified_local_account_is_linked_not_taken_over`; `test_google::test_unverified_local_account_taken_over`, `test_existing_verified_account_is_linked`; `test_security_fixes::test_i5_*`. **Residuo:** R-2 (ridotto) |
+| T9 | Account pre-hijacking | Verifica email (token monouso 256 bit, solo SHA-256 nel DB, TTL 24 h, link con token nel frammento). Identità Google verificata + account locale **non verificato** ⇒ **takeover** (DEVIAZIONE da §5.3): password rimossa, identità locale eliminata, token di verifica pendenti eliminati, **tutte** le famiglie revocate + marker utente (attesa che l'orologio Redis lo superi prima della nuova sessione); account locale verificato ⇒ collegamento; una sola identità Google per account (409); email Google canonicalizzata con la **stessa** funzione delle email locali | `routers/google.py::_resolve_user`, `routers/verification.py`, `services/email_verification.py`, `routers/auth.py::password_login` (ricontrollo dell'hash dopo la creazione della sessione) | `test_email_verification::test_prehijack_google_takeover_kills_attacker`, `test_login_racing_a_takeover_never_keeps_a_session`, `test_prehijack_takeover_victim_session_is_usable`, `test_verified_local_account_is_linked_not_taken_over`; `test_google::test_unverified_local_account_taken_over`, `test_existing_verified_account_is_linked`; `test_security_fixes::test_i5_*`. **Residuo:** R-2 (ridotto) |
 | T10 | Credential stuffing / brute force | Login 5/min per IP **e** 5/min per email; registrazione 3/h per IP; Google authorize 20/min e callback 10/min per IP; Argon2id costoso | `ratelimit.py`, `routers/auth.py`, `routers/google.py` | `test_ratelimit::test_login_per_ip`, `test_login_per_email`, `test_register_per_ip`; `test_security_fixes::test_l6_google_callback_rate_limited_per_ip`, `test_l6_google_authorize_rate_limited_per_ip`; E2E 14 |
 | T11 | Enumerazione account | Login: messaggio unico `Invalid email or password`; registrazione su email esistente: `400 Registration failed` generico | `routers/auth.py` | `test_register_existing_email_generic_failure`, `test_login_happy_path_and_wrong_password` |
 | T12 | Timing attack sul login | Verifica Argon2id fittizia (stessi parametri) se l'utente non esiste, è solo-Google o è disattivato | `security/passwords.py::dummy_verify` | `test_login_unknown_user_runs_dummy_verify`, `test_login_google_only_and_inactive_users_dummy_verify` (verificano che la verifica fittizia avvenga, non misurano i tempi) |
-| T13 | SQL injection | Solo SQLAlchemy Core/ORM con parametri (prepared statements asyncpg); `text()` solo costanti; ruolo applicativo senza DDL | tutto `src/app`, `scripts/db/roles.sql` | `test_db::test_no_string_built_sql`, `test_raw_text_sql_is_constant`, `test_app_role_cannot_ddl`, `test_migrator_is_not_superuser` |
+| T13 | NoSQL injection (operatori `$ne`/`$gt`, JavaScript lato server) | Filtri costruiti solo da valori tipizzati lato server (UUID, hash calcolati dal server, `str` validate da Pydantic `extra="forbid"`); nessun corpo di richiesta usato come filtro; nessun `$where`/`$function`; utente applicativo senza DDL | tutto `src/app`, `scripts/db/create_roles.py` | `test_mongo::test_operator_payloads_are_rejected_before_the_database`, `test_no_server_side_javascript_in_queries`, `test_app_user_is_dml_only_on_its_database`, `test_schema_user_is_not_cluster_admin` |
 | T14 | SSRF / egress non controllato | Nessun URL fornito dall'utente raggiunge httpx o boto3; endpoint Google da configurazione; `follow_redirects=False`; presign senza rete | `main.py::build_services`, `services/google.py`, `services/storage.py` | Revisione del codice; nessun test dedicato |
 | T15 | Download non autorizzato / path traversal | DPoP + entitlement attivo + 10/h per utente; chiave del bucket solo da enum `Product` lato server; URL prefirmato 300 s | `routers/downloads.py`, `deps.py::require_entitlement`, `services/storage.py` | `test_downloads::test_entitlement_matrix`, `test_entitlement_missing_or_other_product`, `test_catalog_is_server_side_only`, `test_ratelimit::test_downloads_per_user`; E2E 5 |
 | T16 | Binario manomesso | SHA-256 restituito dal server e mostrato con istruzioni `Get-FileHash`; audit di ogni URL emesso | `services/storage.py`, `portal/src/components/DownloadCard.tsx` | `test_download_allowed`; E2E 5. **Firma Authenticode non implementata** (O-8) |
@@ -187,29 +188,32 @@ Riferimenti ai test: backend `apps/api/tests/<file>::<test>`, portale `apps/port
 | T22 | Fuga di informazioni negli errori | Errori 422 senza `input`/`ctx`; 500 senza stack trace (generato dentro CORS da `ServerErrorGuardMiddleware`); il portale non mostra mai il `detail` del backend | `errors.py`, `middleware.py`, `portal/src/api/errors.ts` | `test_validation_errors_do_not_echo_input`, `test_unhandled_error_has_no_stacktrace`, `test_secrets_not_in_repr`; `test_security_fixes::test_i6_cors_headers_on_413_429_500`; `errors.test`; E2E 11b |
 | T23 | Open redirect dall'URL di autorizzazione | Origin dell'URL di autorizzazione in allow-list (`VITE_OAUTH_AUTHORIZE_ORIGINS`), solo https | `portal/src/lib/safeUrls.ts` | `safeUrls.test` |
 | T24 | Corsa tra schede sul refresh (falso positivo di reuse) | Web Lock `nzt_token_refresh` su ogni operazione che usa il cookie; `keepalive` | `portal/src/auth/session.ts`, `portal/src/api/http.ts` | `session.test` (inclusa controprova senza lock); E2E 8, 8f |
-| T25 | Utente disattivato con sessioni attive | Ogni richiesta protetta rilegge `users.is_active`; la rotazione rifiuta utenti inattivi | `deps.py`, `services/sessions.py` | `test_dpop::test_resource_inactive_user` |
+| T25 | Utente disattivato con sessioni attive | Ogni richiesta protetta rilegge `users.isActive`; la rotazione rifiuta utenti inattivi | `deps.py`, `services/sessions.py` | `test_dpop::test_resource_inactive_user` |
 
 ---
 
-## 5. Modello dati (PostgreSQL 16)
+## 5. Modello dati (MongoDB)
 
-Schema creato da `apps/api/alembic/versions/0001_initial_schema.py` (modelli in `apps/api/src/app/models.py`). Conforme alla specifica §3 salvo la correzione su `download_logs`.
+Database dedicato (`NZT_MONGODB_DATABASE`, es. `nzt`) su un cluster MongoDB esterno condiviso con altri servizi. Convenzioni: collection e campi in **camelCase**, `_id` **UUID binario** (BSON subtype 4, `uuidRepresentation=standard`: gli ID non sono enumerabili e restano quelli generati da PostgreSQL), date UTC (precisione al millisecondo). Validatori, indici e TTL sono definiti in un solo punto, `apps/api/src/app/schema.py`, e applicati da `python -m app.schema` con un utente separato (§16.2).
 
-| Tabella | Colonne chiave | Vincoli / indici | Note di sicurezza |
+| Collection | Campi | Indici | Note di sicurezza |
 | :--- | :--- | :--- | :--- |
-| `users` | `id` UUID, `email` VARCHAR(255), `password_hash` NULL, `is_active`, `is_verified`, `created_at`, `updated_at` | `idx_users_email_lower` UNIQUE su `LOWER(email)` | `password_hash` NULL per account solo Google; `updated_at` aggiornato dall'ORM |
-| `auth_identities` | `user_id` → users CASCADE, `provider` (`local`/`google`), `provider_user_id` | UNIQUE(`provider`, `provider_user_id`), `idx_identities_user_id` | `local` → email normalizzata; `google` → `sub` |
-| `refresh_token_families` | `user_id` → users CASCADE, `dpop_jkt`, `is_revoked`, `revoked_reason` | `idx_families_user` | `revoked_reason` ∈ {`logout`, `reuse_detected`} (valori scritti dal codice) |
-| `refresh_tokens` | `family_id` → families CASCADE, `token_hash` VARCHAR(64), `is_used`, `expires_at` | UNIQUE(`token_hash`), `idx_refresh_token_lookup` | Solo SHA-256 esadecimale del token; mai il valore in chiaro |
-| `entitlements` | `user_id` → users CASCADE, `product_code`, `is_enabled`, `valid_until` NULL | UNIQUE(`user_id`, `product_code`), `idx_entitlements_lookup` | `valid_until` NULL = licenza perpetua |
-| `download_logs` | `user_id` **NULL** → users **SET NULL**, `product_code`, `ip_address` INET, `user_agent` TEXT, `download_token_id` | `idx_download_audit` (`user_id`, `created_at DESC`) | Audit che sopravvive alla cancellazione dell'utente |
+| `users` | `_id`, `email` (≤255), `passwordHash` (null per account solo Google), `isActive`, `isVerified`, `role` ∈ {`customer`,`admin`}, `identities[]` {`provider` ∈ {`local`,`google`}, `providerUserId`, `createdAt`}, `entitlements[]` {`productCode`, `isEnabled`, `validUntil` (null = perpetua), `createdAt`}, `createdAt`, `updatedAt` | `email_ci_unique` (UNIQUE, collation `en` strength 2 = case-insensitive), `identities_unique` (UNIQUE parziale su provider + subject) | Identità ed entitlement **incorporati**: una sola lettura per richiesta autenticata (§7.3). Un'identità esterna appartiene a un solo utente |
+| `refreshTokenFamilies` | `_id`, `userId`, `dpopJkt`, `isRevoked`, `revokedReason`, `currentTokenHash`, `expiresAt`, `createdAt`, `updatedAt` | `current_token_unique` (UNIQUE), `user`, `expires_ttl` (TTL) | Una famiglia = una sessione; contiene l'hash del token **corrente** (rotazione atomica, §9.1) |
+| `refreshTokens` | `_id` = SHA-256 esadecimale del token, `familyId`, `expiresAt`, `createdAt` | `expires_ttl` (TTL) | **Ogni** token emesso → la sua famiglia (reuse detection, rate limit per famiglia, logout). Mai il valore in chiaro |
+| `emailVerificationTokens` | `_id` = SHA-256 del token, `userId`, `expiresAt`, `usedAt`, `createdAt` | `user`, `expires_ttl` (TTL) | Monouso (§11.3) |
+| `downloadLogs` | `_id`, `userId` (null ammesso), `productCode`, `ipAddress` (stringa normalizzata), `userAgent` (≤512), `downloadTokenId`, `createdAt` | `user_audit` (`userId`, `createdAt` desc) | Audit senza TTL, indipendente dal documento utente |
 
-**Correzione `download_logs.user_id` (DEVIAZIONE).** La specifica dichiara `user_id UUID NOT NULL REFERENCES users(id) ON DELETE SET NULL`: le due clausole sono incompatibili (cancellare un utente con download registrati fallirebbe). La colonna è `NULL`-abile con `ON DELETE SET NULL`, così le righe di audit restano dopo la cancellazione dell'utente (`test_downloads::test_audit_rows_survive_user_deletion`).
+**Validatori `$jsonSchema` (equivalente di NOT NULL / CHECK / VARCHAR).** Ogni collection ha `validationLevel: strict`, `validationAction: error`, tutti i campi obbligatori, tipi, lunghezze, enum e `additionalProperties: false` (nessun campo sconosciuto, quindi nemmeno chiavi `$…`): un documento malformato è rifiutato dal database anche se un bug lo producesse (`test_mongo::test_users_validator_*`, `test_email_verification::test_verification_collection_schema`).
+
+**TTL (AGGIUNTA).** Refresh token, famiglie scadute e token di verifica sono eliminati dal database alla scadenza (in PostgreSQL restavano per sempre). Conseguenza: un refresh token presentato **dopo** la propria scadenza è `INVALID` invece di `REUSE` (non può comunque ottenere nulla).
+
+**`downloadLogs.userId` (D-A3).** La specifica chiedeva `NOT NULL` + `ON DELETE SET NULL` (incompatibili). In MongoDB non ci sono chiavi esterne: il documento di audit resta quando l'utente viene cancellato (`test_downloads::test_audit_rows_survive_user_deletion`). L'API non cancella utenti; un eventuale strumento di cancellazione (GDPR) dovrà azzerare anche `userId` nei log.
 
 Altri dettagli:
-* Estensione `uuid-ossp` creata dalla migrazione (ruolo migrator, proprietario del DB); i default `uuid_generate_v4()` restano, ma l'applicazione genera comunque gli UUIDv4 in Python.
-* La coerenza modelli ↔ migrazione è verificata (`test_db::test_models_match_migrations`, `alembic check`), così come la corrispondenza con la specifica (`test_schema_matches_spec`) e l'unicità case-insensitive dell'email (`test_case_insensitive_unique_email`).
-* Il downgrade elimina tabelle ed estensione (`test_migrations_downgrade_base_and_upgrade_head`).
+* Unicità case-insensitive dell'email (`test_mongo::test_case_insensitive_unique_email`) e dell'identità esterna (`test_external_identity_belongs_to_one_user`).
+* La coerenza codice ↔ database è verificata da `python -m app.schema --check` (exit 1 se validatori o indici differiscono; `test_mongo::test_schema_is_idempotent_and_in_sync`, `test_schema_drift_is_detected_and_repaired`).
+* Le query critiche usano tutte un indice, mai una scansione completa (`test_mongo::test_hot_queries_use_indexes`, verificato con `explain`). La ricerca per identità Google include `identities.providerUserId: {$exists: true}` (`db.identity_filter`) perché il planner usi l'indice parziale.
 
 ---
 
@@ -259,7 +263,7 @@ Flusso di `POST /api/v1/auth/login` (`routers/auth.py`):
 
 Registrazione con email già presente (anche con maiuscole diverse, grazie all'indice su `LOWER(email)`): `400 {"detail":"Registration failed"}`, nessun cookie. L'hash Argon2 viene calcolato **prima** dell'inserimento in entrambi i casi, così i tempi sono simili. Resta un'enumerazione residua (201 contro 400) intrinseca a un endpoint che apre subito una sessione; è limitata a 3 tentativi/ora per IP.
 
-Gli account locali nascono con `is_verified = FALSE` e possono comunque effettuare il login e scaricare (decisione utente: nessuna nuova restrizione). **AGGIUNTA:** alla registrazione viene inviata (dopo la risposta, senza far fallire la registrazione) un'email di verifica; la verifica decide solo chi controlla l'account quando arriva un'identità Google con la stessa email (§11.3). Non esiste un flusso di reset password (R-2, §23).
+Gli account locali nascono con `isVerified = false` e possono comunque effettuare il login e scaricare (decisione utente: nessuna nuova restrizione). **AGGIUNTA:** alla registrazione viene inviata (dopo la risposta, senza far fallire la registrazione) un'email di verifica; la verifica decide solo chi controlla l'account quando arriva un'identità Google con la stessa email (§11.3). Non esiste un flusso di reset password (R-2, §23).
 
 ---
 
@@ -324,7 +328,7 @@ Formato esatto della prova (JWS compatto `base64url(header).base64url(payload).b
 4. Validazione della prova **con** `ath`.
 5. `proof.jkt == cnf.jkt`, altrimenti `401 invalid_token`.
 6. Marker di revoca Redis `user_revoked_after_ms:{user_id}` e `jkt_revoked_after_ms:{jkt}` (millisecondi, orologio Redis): token con `iat_ms ≤ marker` ⇒ `401` (§9.3).
-7. `users.is_active` riletto dal DB a ogni richiesta (AGGIUNTA): utente disattivato ⇒ `401`.
+7. Documento utente letto dal DB a ogni richiesta con **una sola** query (`{_id, isActive: true}`, proiezione `email, role, isVerified, entitlements`): utente disattivato o inesistente ⇒ `401` (AGGIUNTA). La stessa lettura alimenta il controllo admin (`role`), gli entitlement dei download e `GET /me`: un admin declassato, un entitlement revocato o un utente disattivato hanno effetto dalla richiesta successiva, senza query aggiuntive (prima: due query per le rotte admin e i download).
 
 ### 7.4 Errori DPoP
 
@@ -361,7 +365,7 @@ In produzione l'avvio fallisce se la chiave manca; in sviluppo/test viene genera
 | Proprietà | Valore |
 | :--- | :--- |
 | Valore | `secrets.token_urlsafe(32)` (32 byte CSPRNG, 43 caratteri base64url) |
-| Persistenza server | Solo `SHA-256` esadecimale in `refresh_tokens.token_hash` |
+| Persistenza server | Solo `SHA-256` esadecimale (`refreshTokens._id`, `refreshTokenFamilies.currentTokenHash`) |
 | Scadenza | `NZT_REFRESH_TOKEN_TTL_SECONDS` default **604800 s** (7 giorni), ammesso 3600–604800; **scorrevole**: ogni rotazione emette un token valido altri 7 giorni |
 | Legame | La famiglia memorizza il `dpop_jkt` della chiave usata al login/registrazione/callback |
 
@@ -392,32 +396,33 @@ Cosa si perde rispetto a `__Host-`: un altro sottodominio di `nztsolutions.it` c
 
 ### 9.1 Rotazione atomica
 
-`apps/api/src/app/services/sessions.py::SessionService.rotate`. Un'unica istruzione condizionale consuma il token:
+`apps/api/src/app/services/sessions.py::SessionService.rotate`. Il token presentato viene risolto **una volta** per richiesta (`refreshTokens._id = sha256(token)` → famiglia; dipendenza FastAPI in cache, condivisa da rate limit e handler). Poi:
 
-```sql
-UPDATE refresh_tokens SET is_used = TRUE
-FROM refresh_token_families f
-WHERE token_hash = :h AND is_used = FALSE AND expires_at > now()
-  AND f.id = family_id AND f.is_revoked = FALSE AND f.dpop_jkt = :jkt
-RETURNING family_id, f.user_id;
+1. si scrive il documento `refreshTokens` del **nuovo** token (così ogni token che può essere consegnato è noto al rilevatore di riuso);
+2. un unico compare-and-swap atomico su un **solo documento** consuma il token:
+
+```js
+refreshTokenFamilies.findOneAndUpdate(
+  { _id: family, currentTokenHash: h, isRevoked: false, dpopJkt: jkt, expiresAt: { $gt: now } },
+  { $set: { currentTokenHash: newHash, expiresAt: newExpiry, updatedAt: now } })
 ```
 
-Se una riga è restituita: si controlla che l'utente sia attivo (altrimenti rollback e `401`), si inserisce il nuovo token nella stessa famiglia e si fa commit nella stessa transazione; si emette un nuovo access token legato allo stesso `jkt`. Il lock di riga di PostgreSQL con READ COMMITTED garantisce che, tra N richieste concorrenti con lo stesso token, **una sola** vinca.
+L'atomicità a livello di documento di MongoDB garantisce che, tra N richieste concorrenti con lo stesso token, **una sola** vinca, senza transazioni multi-documento. Se lo swap riesce si verifica che l'utente sia attivo (e, per la dashboard admin, che abbia ancora `role: admin`): altrimenti la famiglia è revocata (`user_not_allowed`) e la risposta è `401`. Se fallisce, il documento del nuovo token (mai consegnato) viene eliminato.
 
 ### 9.2 Classificazione dei fallimenti
 
-Se nessuna riga è consumata, la riga viene riletta (dopo l'eventuale vincitore concorrente) e classificata in quest'ordine:
+Se lo swap non riesce, la famiglia viene riletta (dopo l'eventuale vincitore concorrente) e classificata in quest'ordine:
 
 | Stato rilevato | Esito | Risposta | Effetti |
 | :--- | :--- | :--- | :--- |
-| Token sconosciuto o malformato (non 43 caratteri base64url) | INVALID | `401 Invalid refresh token` + cookie cancellato | Nessuno |
-| `is_used = TRUE` | **REUSE** | `401 Refresh token reuse detected` + cookie cancellato | **Tutte** le famiglie non revocate dell'utente ⇒ `is_revoked=TRUE, revoked_reason='reuse_detected'`; commit; poi marker Redis `user_revoked_after_ms:{user_id}` = ora Redis in ms (TTL = TTL access + 5 s, §9.3); log `SECURITY: refresh token reuse detected` |
+| Token sconosciuto o malformato (non 43 caratteri base64url), o già eliminato dal TTL | INVALID | `401 Invalid refresh token` + cookie cancellato | Nessuno |
+| `currentTokenHash ≠ hash presentato` (token già ruotato) | **REUSE** | `401 Refresh token reuse detected` + cookie cancellato | **Tutte** le famiglie non revocate dell'utente ⇒ `isRevoked=true, revokedReason='reuse_detected'`; poi marker Redis `user_revoked_after_ms:{user_id}` = ora Redis in ms (TTL = TTL access + 5 s, §9.3); log `SECURITY: refresh token reuse detected` |
 | Famiglia revocata | REVOKED | `401 Invalid refresh token` + cookie cancellato | Nessuno |
 | Scaduto | EXPIRED | `401 Invalid refresh token` + cookie cancellato | **Non** è riuso: token non consumato, famiglia non revocata |
-| `jkt` della prova ≠ `dpop_jkt` della famiglia | KEY_MISMATCH | `401 DPoP key does not match refresh token binding` + `WWW-Authenticate: DPoP error="invalid_dpop_proof"` | Token **non** consumato, famiglia **non** revocata, cookie **non** cancellato |
+| `jkt` della prova ≠ `dpopJkt` della famiglia | KEY_MISMATCH | `401 DPoP key does not match refresh token binding` + `WWW-Authenticate: DPoP error="invalid_dpop_proof"` | Token **non** consumato, famiglia **non** revocata, cookie **non** cancellato |
 | Cookie assente | — | `401 Missing refresh token` | — |
 
-Nota: un token già usato presentato con una chiave diversa è classificato REUSE (il controllo `is_used` precede il controllo della chiave e della scadenza): chi ripresenta un cookie vecchio rubato fa scattare la revoca totale. Conseguenza (revisione indipendente, L1, **non corretta: decisione utente**): un singolo valore storico di refresh token già usato — anche scaduto, con qualunque chiave — revoca tutte le sessioni della vittima, ripetibile all'infinito (le righe usate non vengono mai eliminate). Vedi R-21.
+Nota: un token già usato presentato con una chiave diversa è classificato REUSE (il controllo del token corrente precede il controllo della chiave e della scadenza): chi ripresenta un cookie vecchio rubato fa scattare la revoca totale. Conseguenza (revisione indipendente, L1, **non corretta: decisione utente**): un singolo valore storico di refresh token già usato, con qualunque chiave, revoca tutte le sessioni della vittima. Con MongoDB la finestra è limitata alla validità del token (7 giorni): i documenti `refreshTokens` scaduti sono eliminati dal TTL e il token diventa INVALID. Vedi R-21.
 
 ### 9.3 Marker di revoca (AGGIUNTA)
 
@@ -429,11 +434,11 @@ Gli access token sono stateless; per renderli invalidabili prima della scadenza 
 | `jkt_revoked_after_ms:{jkt}` | Logout | Rifiuta ogni access token legato a quella chiave con `iat_ms ≤ marker` | TTL access + 5 s |
 
 **Ordinamento al millisecondo su un unico orologio (correzione L3).** Prima marker e `iat` erano in secondi interi con confronto `≤`: un login legittimo nello **stesso secondo** di un logout o di una reuse detection riceveva un token già revocato. Ora:
-* il marker è scritto da uno script Lua che legge `TIME` di Redis **dopo** l'`UPDATE` di revoca (logout: dopo il commit; reuse: con i lock di riga ancora tenuti, commit subito dopo) e conserva il massimo tra valore esistente e nuovo (non arretra mai);
-* ogni access token porta `iat_ms` = `TIME` di Redis letto **prima** del lavoro DB che lo emette (consumo del refresh token in `rotate`, creazione della famiglia in `create_session`);
+* il marker è scritto da uno script Lua che legge `TIME` di Redis **dopo** che l'aggiornamento di revoca è stato confermato dalla maggioranza del replica set (write concern `majority`) e conserva il massimo tra valore esistente e nuovo (non arretra mai);
+* ogni access token porta `iat_ms` = `TIME` di Redis letto **prima** del lavoro DB che lo emette (swap del refresh token in `rotate`, creazione della famiglia in `create_session`);
 * revocato ⇔ `iat_ms ≤ marker`.
 
-Quindi un token il cui consumo è avvenuto prima dell'`UPDATE` di revoca è sempre rifiutato (il suo istante precede il marker); un consumo successivo non può riuscire (famiglia revocata; uno concorrente attende il lock di riga e poi fallisce); un token emesso dopo la revoca è accettato anche nello stesso secondo; l'unico caso ambiguo (stesso millisecondo) è rifiutato (fail-closed). L'orologio Redis elimina la deriva tra repliche dell'API. `iat`/`exp` restano in secondi dall'orologio locale (validati da PyJWT). Compatibilità: i marker legacy in secondi (`user_revoked_after:*`, `jkt_revoked_after:*`, scritti da una replica non ancora aggiornata durante un deploy) sono ancora letti con la semantica precedente; scadono entro 605 s. Verificato da `test_reuse_detection_revokes_all_and_kills_access_tokens`, `test_security_fixes::test_l3_*` (orologio locale congelato: il re-login nello stesso secondo è accettato, il token precedente resta revocato) e, nel browser, da E2E 7 (marker legacy `jkt` ⇒ `launcher:401, refresh:200, launcher:200`).
+Quindi un token il cui swap è avvenuto prima della revoca è sempre rifiutato (il suo istante precede il marker) e il suo nuovo refresh token appartiene a una famiglia revocata; uno swap successivo non può riuscire (il filtro richiede `isRevoked: false`, valutato atomicamente sul documento); un token emesso dopo la revoca è accettato anche nello stesso secondo; l'unico caso ambiguo (stesso millisecondo) è rifiutato (fail-closed). L'orologio Redis elimina la deriva tra repliche dell'API. `iat`/`exp` restano in secondi dall'orologio locale (validati da PyJWT). Compatibilità: i marker legacy in secondi (`user_revoked_after:*`, `jkt_revoked_after:*`, scritti da una replica non ancora aggiornata durante un deploy) sono ancora letti con la semantica precedente; scadono entro 605 s. Verificato da `test_reuse_detection_revokes_all_and_kills_access_tokens`, `test_security_fixes::test_l3_*` (orologio locale congelato: il re-login nello stesso secondo è accettato, il token precedente resta revocato) e, nel browser, da E2E 7 (marker legacy `jkt` ⇒ `launcher:401, refresh:200, launcher:200`).
 
 ### 9.4 Logout (AGGIUNTA: contratto)
 
@@ -443,7 +448,7 @@ La specifica cita `/logout` senza definirne il contratto. Implementato `POST /ap
 * Cookie assente ⇒ `401 Missing refresh token`.
 * Token malformato o sconosciuto ⇒ `204` (idempotente) con cookie cancellato.
 * Chiave della prova ≠ chiave della famiglia ⇒ `401 Invalid DPoP proof` (`invalid_dpop_proof`).
-* Altrimenti: famiglia revocata (`revoked_reason='logout'`), marker `jkt_revoked_after_ms:{jkt}`, cookie cancellato, `204` senza body.
+* Altrimenti: famiglia revocata (`revokedReason='logout'`), marker `jkt_revoked_after_ms:{jkt}`, cookie cancellato, `204` senza body.
 
 Lato portale (`session.ts::logout`): sotto il lock `nzt_token_refresh` chiama il logout, poi **elimina la chiave da IndexedDB anche se il server non è raggiungibile** (ogni cookie legato a quella chiave diventa definitivamente inutilizzabile), azzera la memoria e notifica le altre schede via `BroadcastChannel('nzt_auth')` con il solo messaggio `logout`. Verificato da `test_auth_flows::test_logout` e E2E 10 (204 con DPoP, chiave eliminata, cookie cancellato, altra scheda disconnessa, famiglia `logout`, replay del cookie precedente ⇒ 401).
 
@@ -475,7 +480,7 @@ Con RTR senza finestra di tolleranza (la specifica non ne prevede), due rotazion
 
 ### 10.3 Lato server
 
-* Rotazione atomica a singola istruzione (§9.1): esattamente un vincitore (`test_concurrent_double_refresh_exactly_one_wins`).
+* Rotazione con compare-and-swap atomico su un solo documento (§9.1): esattamente un vincitore (`test_concurrent_double_refresh_exactly_one_wins`).
 * Rate limit di 30 rotazioni/min per famiglia (§14).
 * Nessuna finestra di grazia: decisione utente pendente (O-P1, §23).
 
@@ -543,13 +548,13 @@ Ordine di risoluzione in `_resolve_user`:
 | Identità `google`/`sub` già collegata, utente attivo | Login su quell'utente |
 | Identità collegata, utente disattivato | `403 Account is disabled` (AGGIUNTA) |
 | Email esistente, utente disattivato | `403 Account is disabled` (AGGIUNTA) |
-| Email esistente con `is_verified = FALSE` | **Takeover (DEVIAZIONE da §5.3, decisione utente)**: con la riga `users` bloccata `FOR UPDATE`: `password_hash = NULL`, identità `local` eliminata, token di verifica pendenti eliminati, **tutte** le famiglie revocate (`revoked_reason = google_takeover`) + marker `user_revoked_after_ms`; `is_verified = TRUE`, identità Google collegata; commit; il marker viene spostato di nuovo **dopo** il commit e si attende che l'orologio Redis lo superi; solo allora viene creata la sessione DPoP del proprietario. Motivo: con la regola originale un pre-registratore bloccava per sempre l'accesso Google della vittima (revisione M2); `email_verified=true` di Google prova il possesso della casella, una password su un account mai verificato no |
+| Email esistente con `isVerified = false` | **Takeover (DEVIAZIONE da §5.3, decisione utente)**: un unico compare-and-swap atomico sul documento utente (condizione: ancora non verificato, attivo, senza identità Google) imposta `passwordHash = null`, `isVerified = true` e sostituisce **tutte** le identità con quella Google; poi token di verifica pendenti eliminati, **tutte** le famiglie revocate (`revokedReason = google_takeover`) + marker `user_revoked_after_ms`; si attende che l'orologio Redis superi il marker e solo allora viene creata la sessione DPoP del proprietario. Se lo swap non riesce (l'account è stato verificato nel frattempo, disattivato o collegato) il takeover non avviene. Motivo: con la regola originale un pre-registratore bloccava per sempre l'accesso Google della vittima (revisione M2); `email_verified=true` di Google prova il possesso della casella, una password su un account mai verificato no |
 | Email esistente verificata, già collegata a un **altro** `sub` Google | `409 Account already linked to a different Google identity` (AGGIUNTA) |
-| Email esistente verificata | Inserimento `auth_identities(google, sub)` e login (**CONFORME**) |
-| Email nuova | Nuovo utente `is_verified=TRUE`, `password_hash=NULL` + identità Google (**CONFORME**) |
+| Email esistente verificata | `$push` dell'identità Google con filtro atomico (attivo, verificato, nessuna identità Google) e login (**CONFORME**) |
+| Email nuova | Nuovo utente `isVerified=true`, `passwordHash=null` + identità Google (**CONFORME**) |
 | Conflitto di unicità concorrente | `409 Account linking conflict, please retry` |
 
-Corsa con un login a password concorrente: `login` ricontrolla l'hash verificato sotto `SELECT … FOR UPDATE` sulla stessa riga; o il takeover committa prima (⇒ `401`), o il takeover attende il commit del login e ne revoca la sessione. Verifica email (AGGIUNTA, `routers/verification.py`): `POST /verify-email {token}` pubblico, senza DPoP (non crea sessioni), 10/min per IP, token sconosciuto/malformato/usato/scaduto ⇒ unico `400`; `POST /resend-verification` autenticato DPoP (usa l'email dell'utente autenticato: nessuna enumerazione), 3/h per utente + 10/h per IP, no-op se già verificato, invalida i token pendenti; `GET /me` ⇒ `{email, is_verified}`. Il link è `<primo origin del portale>/verifica-email#token=…` (frammento: mai nei log né nel `Referer`); il portale lo legge una volta, ripulisce l'URL con `history.replaceState` e lo invia con una POST esplicita. Rischio residuo: R-2.
+Corsa con un login a password concorrente (senza lock di riga): il login (`routers/auth.py::password_login`, comune a cliente e admin) crea la sessione e **poi** ricontrolla che l'hash verificato sia ancora quello corrente. Il takeover rimuove prima la password e **poi** revoca tutte le famiglie: o la rilettura del login vede la password rimossa (la nuova famiglia viene revocata, `credentials_changed`, risposta `401`), oppure è avvenuta prima della rimozione, quindi la famiglia esisteva già e il takeover la revoca. Il rehash Argon2 è anch'esso un compare-and-swap (non riporta mai in vita una password rimossa). Verificato da `test_email_verification::test_login_racing_a_takeover_never_keeps_a_session`. Verifica email (AGGIUNTA, `routers/verification.py`): `POST /verify-email {token}` pubblico, senza DPoP (non crea sessioni), 10/min per IP, token sconosciuto/malformato/usato/scaduto ⇒ unico `400`; `POST /resend-verification` autenticato DPoP (usa l'email dell'utente autenticato: nessuna enumerazione), 3/h per utente + 10/h per IP, no-op se già verificato, invalida i token pendenti; `GET /me` ⇒ `{email, is_verified}`. Il link è `<primo origin del portale>/verifica-email#token=…` (frammento: mai nei log né nel `Referer`); il portale lo legge una volta, ripulisce l'URL con `history.replaceState` e lo invia con una POST esplicita. Rischio residuo: R-2.
 
 ---
 
@@ -563,9 +568,10 @@ GET /api/v1/downloads/launcher   (Authorization: DPoP <AT> + DPoP con ath)
    ├─ 1. get_current_user (§7.3)                       ── 401
    ├─ 2. rate limit 10/h per utente                     ── 429
    ├─ 3. require_entitlement("launcher_core")           ── 403
-   │      is_enabled AND (valid_until IS NULL OR valid_until > now())
-   ├─ 4. INSERT download_logs(user_id, product_code, ip_address,
-   │      user_agent[:512], download_token_id = 128 bit hex)  → COMMIT
+   │      (in memoria, dal documento utente letto al punto 1)
+   │      isEnabled AND (validUntil == null OR validUntil > now)
+   ├─ 4. insertOne downloadLogs{userId, productCode, ipAddress,
+   │      userAgent[:512], downloadTokenId = 128 bit hex}  → w: majority
    └─ 5. presign SigV4 GET (boto3, calcolo locale HMAC-SHA256, ExpiresIn=300,
           ResponseContentDisposition=attachment; filename="NZT-Launcher.exe")
    ▼
@@ -576,7 +582,7 @@ GET /api/v1/downloads/launcher   (Authorization: DPoP <AT> + DPoP con ath)
 | :--- | :--- |
 | Nessun URL statico pubblico | Bucket privato; solo URL prefirmati di 300 s |
 | Mappatura solo da enumerazioni server | Chiave oggetto `binaries/launcher/v{NZT_LAUNCHER_VERSION}/NZT-Launcher.exe` dall'enum `Product` + configurazione; versione validata `^\d{1,4}\.\d{1,4}\.\d{1,4}$` all'avvio; l'endpoint non dichiara parametri (eventuali query ignorate) — `test_catalog_is_server_side_only` |
-| Audit per ogni download autorizzato | Riga in `download_logs` **committata prima** di generare l'URL; `download_token_id` non restituito (risposta identica alla specifica) |
+| Audit per ogni download autorizzato | Documento in `downloadLogs` **confermato dalla maggioranza** (`w: majority`) prima di generare l'URL; `downloadTokenId` non restituito (risposta identica alla specifica) |
 | Verifica integrità SHA-256 | Hash da `NZT_LAUNCHER_SHA256` (produzione rifiuta il default di zeri). Il portale valida che sia 64 hex e l'URL https, mostra hash, pulsante di copia e istruzioni `Get-FileHash`; **non può verificare il file scaricato** (R-4). Il Launcher/installer non è nel repository |
 | `require_entitlement(product_code)` | Factory di dependency in `deps.py` |
 
@@ -673,7 +679,7 @@ Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
 
 ## 15. IP client e proxy fidati
 
-`apps/api/src/app/client_ip.py`. L'IP del client alimenta i limiti per IP e la colonna `download_logs.ip_address`.
+`apps/api/src/app/client_ip.py`. L'IP del client alimenta i limiti per IP e il campo `downloadLogs.ipAddress` (stringa normalizzata da `ipaddress`).
 
 * Default (`NZT_TRUSTED_PROXY_CIDRS` vuoto): si usa il peer TCP; `X-Forwarded-For` è **ignorato**.
 * Con CIDR configurati: l'header è considerato solo se il peer TCP appartiene a un CIDR fidato; **tutte** le righe `X-Forwarded-For` sono unite nell'ordine ricevuto (RFC 9110 §5.3; prima si leggeva solo la prima riga, I2); si esaminano solo le **32 voci più a destra** (budget di parsing 8 KiB, sempre dalla destra), lette **da destra a sinistra** saltando gli hop fidati; il primo indirizzo non fidato è il client. Voci non interpretabili ⇒ si usa l'ultimo indirizzo fidato; 32 hop tutti fidati ⇒ il più a sinistra tra quelli esaminati. Le voci aggiunte dal client a sinistra sono quindi irrilevanti, qualunque sia il loro numero. **Correzione M1:** prima la catena era troncata con `[:32]`, cioè alle 32 voci più a **sinistra** (controllate dal client): con ≥ 32 voci falsificate l'IP reale usciva dalla finestra e il client sceglieva il proprio IP, aggirando tutti i limiti per IP e falsificando `download_logs.ip_address` (dal vivo: 8 registrazioni su 8 accettate invece di 3).
@@ -685,30 +691,44 @@ Configurazione errata = rischio: CIDR vuoto dietro un proxy ⇒ tutti gli utenti
 
 ---
 
-## 16. Database: privilegio minimo, TLS, migrazioni, SQL injection
+## 16. Database: privilegio minimo, TLS, schema, NoSQL injection
 
-### 16.1 Ruoli — CONFORME
+MongoDB **esterno** (es. Atlas) condiviso con altri servizi per avere un solo servizio da pagare. Isolamento tra servizi: **un database per servizio** e utenti con privilegi limitati a quel database (un servizio compromesso non legge i dati degli altri).
 
-`apps/api/scripts/db/roles.sql` (eseguito una volta da un amministratore con le variabili psql `db_name`, `migrator_password`, `app_password`):
+### 16.1 Utenti e ruoli — CONFORME
 
-| Ruolo | Attributi | Permessi |
+`apps/api/scripts/db/create_roles.py` (idempotente, solo `pymongo`, password da variabili d'ambiente e mai sulla riga di comando; eseguito una volta con una connessione amministrativa). Su Atlas gli stessi ruoli e utenti si creano da **Database Access** (Custom Roles + Database Users), perché Atlas non accetta `createRole`/`createUser` da shell.
+
+| Utente | Ruoli | Permessi |
 | :--- | :--- | :--- |
-| `nzt_migrator` | `LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION` | Proprietario del database e dello schema `public`; esegue Alembic (DDL) |
-| `nzt_app` | `LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOINHERIT` | `CONNECT` sul DB, `USAGE` sullo schema; `SELECT, INSERT, UPDATE, DELETE` su tutte le tabelle create dal migrator (`ALTER DEFAULT PRIVILEGES`); `statement_timeout=15s`, `idle_in_transaction_session_timeout=30s` |
+| `nzt_migrator` | `dbAdmin` + `readWrite` sul solo database dell'API | Applica validatori e indici (`python -m app.schema`), esegue la migrazione dati una tantum |
+| `nzt_app` | ruolo custom `nztApp` | **Solo** `find`, `insert`, `update`, `remove` sulle **5 collection dell'API**, elencate una per una (da `app/schema.py::SPECS`) |
 
-`REVOKE ALL ON DATABASE … FROM PUBLIC` e `REVOKE ALL ON SCHEMA public FROM PUBLIC`. Verificato che `nzt_app` non può `CREATE TABLE/SCHEMA/FUNCTION/INDEX/TEMP`, `DROP`, `ALTER`, `TRUNCATE` (`test_app_role_cannot_ddl`) e che il migrator non è superuser (`test_migrator_is_not_superuser`). Il ruolo applicativo ha DML anche su `alembic_version` (innocuo).
+Verificato con il server reale (`test_mongo::test_app_user_is_dml_only_on_its_database`): `nzt_app` non può `createIndex`, `dropIndex`, `drop`, `collMod`, `createCollection`, `dropDatabase`, `createUser`, né creare collection **implicitamente** (un `insert` o un `$out` verso una collection nuova è rifiutato: per questo il ruolo elenca le collection invece di concedere l'intero database), né leggere o scrivere altri database o `admin.system.users`. Il migrator ha solo i due ruoli sul database dell'API (`test_schema_user_is_not_cluster_admin`). Aggiungendo una collection a `SPECS` va rieseguito `create_roles.py` (o aggiornato il ruolo su Atlas).
 
-### 16.2 Migrazioni
+### 16.2 Schema (validatori + indici)
 
-Alembic usa **solo** `NZT_MIGRATIONS_DATABASE_URL` (ruolo migrator; ripiego su `NZT_DATABASE_URL` se assente fuori produzione — in produzione la variabile è **obbligatoria per Alembic**: senza, il comando fallisce con un errore esplicito e non ripiega sul ruolo runtime; **non** è richiesta né desiderata dall'API, che non deve detenere le credenziali del migrator). Vanno eseguite come passo separato prima del deploy dell'API, mai dal processo applicativo.
+`python -m app.schema` usa **solo** `NZT_MONGODB_MIGRATIONS_URI` (utente `nzt_migrator`; ripiego su `NZT_MONGODB_URI` se assente fuori produzione, dove fallisce con un messaggio chiaro perché l'utente applicativo non ha i permessi). In produzione la variabile è **obbligatoria** per il comando: senza, fallisce **prima** di connettersi e non ripiega sull'utente runtime (`test_security_fixes::test_schema_step_in_production_requires_migrations_uri`); **non** è richiesta né desiderata dall'API (`test_prod_does_not_require_migrations_uri`). Va eseguito come passo separato prima del deploy dell'API. Idempotente; `--check` restituisce exit 1 se il database differisce dal codice. Nello stack di prova (`NZT_BOOTSTRAP=true`) l'entrypoint lo esegue con `NZT_BOOTSTRAP_MIGRATIONS_URI` e rimuove la variabile prima di avviare il server.
 
-### 16.3 TLS verso PostgreSQL — CONFORME
+### 16.3 TLS e rete verso MongoDB — CONFORME
 
-`apps/api/src/app/db.py`: `NZT_DATABASE_SSLMODE` ∈ `disable | require | verify-ca | verify-full`; default `verify-full` in produzione, `disable` altrove; TLS minimo 1.2; CA da `NZT_DATABASE_SSL_ROOT_CERT`. In produzione l'avvio fallisce con qualunque valore diverso da `verify-full` (`verify-ca`, `require` e `disable` rifiutati, come chiede la specifica). Disponibilità di TLS con nome host certificato sulla rete privata Railway: **NON VERIFICATO** (O-2); se non disponibile serve un endpoint con certificato verificabile, non un abbassamento del modo.
+`apps/api/src/app/config.py` + `db.py`. In produzione TLS è obbligatorio (`NZT_MONGODB_TLS`, default `true` in produzione) con verifica del certificato **e** del nome host (default di PyMongo, equivalente a `verify-full`); l'avvio fallisce se l'URI (dell'API o dello schema) contiene `tls=false`/`ssl=false`, `tlsInsecure`, `tlsAllowInvalidCertificates`, `tlsAllowInvalidHostnames` o se non contiene credenziali (`test_security_fixes::test_prod_requires_verified_tls_and_credentials`). La validazione dell'URI non esegue risoluzioni DNS (l'SRV di `mongodb+srv://` viene risolto solo dal driver). CA personalizzata: `NZT_MONGODB_TLS_CA_FILE`.
 
-### 16.4 SQL injection — CONFORME
+Il cluster esterno **non** è sulla rete privata Railway: la regola "Zero Public DB" del documento generale (§1.1) va soddisfatta lato cluster con **IP Access List** limitata agli IP di uscita del servizio API (o private endpoint / peering se il piano lo consente), mai `0.0.0.0/0` (**NON VERIFICATO**, O-2).
 
-Tutte le query passano da SQLAlchemy Core/ORM con parametri legati (prepared statements di asyncpg). Le uniche stringhe `text()` sono costanti (`SELECT 1`, DDL della migrazione). Imposto da test che scandiscono il sorgente (`test_no_string_built_sql`, `test_raw_text_sql_is_constant`).
+Altri parametri del client: `w: majority` (riga di audit e revoche confermate dalla maggioranza prima della risposta), lettura dal primario, `retryWrites`/`retryReads`, timeout di ogni operazione 15 s (`NZT_MONGODB_TIMEOUT_MS`), selezione del server 5 s, pool 10 connessioni, `appname=nzt-area-api`. MongoDB irraggiungibile, senza primario o in timeout ⇒ `503` + `Retry-After: 5` (fail-closed, come Redis; nessuno stack trace).
+
+### 16.4 NoSQL injection — CONFORME
+
+Regola del documento generale §3.2 (scenario B). Ogni filtro e ogni update sono costruiti nel codice da valori tipizzati lato server: `uuid.UUID` (dal JWT verificato), hash SHA-256 calcolati dal server, stringhe validate da Pydantic (`extra="forbid"`: un oggetto `{"$ne": null}` al posto di una stringa è un `422` prima di toccare il database), `bool`, `datetime`. Nessun corpo di richiesta diventa un filtro; nessun operatore JavaScript lato server (`$where`, `$function`, `$accumulator`, `mapReduce`). Verificato dinamicamente (`test_mongo::test_operator_payloads_are_rejected_before_the_database`) e staticamente (`test_no_server_side_javascript_in_queries`); i validatori `additionalProperties: false` rifiutano inoltre qualunque campo sconosciuto (§5).
+
+### 16.5 Nessun dato del database nei log — AGGIUNTA
+
+Il log DEBUG dei comandi di PyMongo stampa i documenti interi (email, hash di password e token). Il logger `pymongo` è fissato a `WARNING` qualunque sia `NZT_LOG_LEVEL` (`app/db.py`); verificato da `test_mongo::test_database_payloads_never_logged` (registrazione con log a DEBUG: nessuna email, nessun hash).
+
+### 16.6 Atomicità senza transazioni multi-documento
+
+Le operazioni sensibili alla concorrenza sono compare-and-swap su **un solo documento** (rotazione §9.1, consumo dei token di verifica, takeover Google §11.3, rehash della password), atomiche in MongoDB senza transazioni. Le scritture multi-documento (registrazione: utente → token di verifica → sessione) sono ordinate in modo che ogni stato parziale sia sicuro: un account senza token di verifica o senza sessione si recupera con "reinvia email" o con un nuovo login. Il replica set non richiede quindi transazioni.
 
 ---
 
@@ -718,7 +738,7 @@ Tutte le query passano da SQLAlchemy Core/ORM con parametri legati (prepared sta
 
 * Tutta la configurazione arriva da variabili d'ambiente con prefisso `NZT_` (`pydantic-settings`, `apps/api/src/app/config.py`); un file `.env` locale è ignorato da git; `apps/api/.env.example` è il modello senza valori reali.
 * I segreti sono `SecretStr`: mai presenti in `repr` o nei log (`test_secrets_not_in_repr`). Una variabile vuota significa "usa il default", mai "segreto vuoto".
-* **Guardie di produzione** (`NZT_ENVIRONMENT=production`, `test_production_requires_secrets`, `test_production_rejects_missing_signing_key_at_startup`, `test_security_fixes::test_prod_*`): l'avvio fallisce se mancano `ACCESS_TOKEN_PRIVATE_KEY_PEM`, `OAUTH_STATE_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`; se `LAUNCHER_SHA256` è il default di zeri; se `NZT_DATABASE_URL` o `NZT_REDIS_URL` non sono impostate **esplicitamente** (i default puntano ai servizi di test su `127.0.0.1`); se `sslmode` non è esattamente `verify-full`; se non è impostato `NZT_TRUSTED_PROXY_CIDRS` né l'opt-in `NZT_DIRECT_CLIENT_CONNECTIONS=true` (o se sono impostati entrambi); se API, portale, `STORAGE_PUBLIC_ORIGIN` o `NZT_STORAGE_ENDPOINT_URL` non sono https.
+* **Guardie di produzione** (`NZT_ENVIRONMENT=production`, `test_production_requires_secrets`, `test_production_rejects_missing_signing_key_at_startup`, `test_security_fixes::test_prod_*`): l'avvio fallisce se mancano `ACCESS_TOKEN_PRIVATE_KEY_PEM`, `OAUTH_STATE_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`; se `LAUNCHER_SHA256` è il default di zeri; se `NZT_MONGODB_URI`, `NZT_MONGODB_DATABASE` o `NZT_REDIS_URL` non sono impostate **esplicitamente** (i default puntano ai servizi di test su `127.0.0.1`); se TLS verso MongoDB non è attivo o l'URI lo indebolisce o non ha credenziali (§16.3); se non è impostato `NZT_TRUSTED_PROXY_CIDRS` né l'opt-in `NZT_DIRECT_CLIENT_CONNECTIONS=true` (o se sono impostati entrambi); se API, portale, `STORAGE_PUBLIC_ORIGIN` o `NZT_STORAGE_ENDPOINT_URL` non sono https.
 * Perché un opt-in separato per "nessun proxy": una variabile vuota significa sempre "usa il default" (`env_ignore_empty`), quindi `NZT_TRUSTED_PROXY_CIDRS=` non può esprimere una scelta consapevole; dimenticare i CIDR dietro un proxy farebbe condividere a tutti gli utenti l'IP del proxy (limiti per IP globali, audit inutile).
 * Le variabili `VITE_*` del portale finiscono nel bundle pubblico: **mai segreti**.
 
@@ -731,11 +751,13 @@ Tutte le query passano da SQLAlchemy Core/ORM con parametri legati (prepared sta
 | `NZT_API_PUBLIC_BASE_URL` | | | `https://api.nztsolutions.it` | `iss`, base `htu`, CSP |
 | `NZT_PORTAL_ORIGINS` | | | `https://clienti.nztsolutions.it` | CORS (CSV), CSP, redirect Google di default |
 | `NZT_STORAGE_PUBLIC_ORIGIN` | | | `https://storage.nztsolutions.it` | Solo CSP `connect-src` |
-| `NZT_DATABASE_URL` | sì | **sì (esplicita)** | DSN di test `nzt_app@127.0.0.1:55432/nzt_test` | Ruolo runtime DML; `postgresql://` convertito in asyncpg; `sslmode` nella URL ignorato |
-| `NZT_MIGRATIONS_DATABASE_URL` | sì (solo per Alembic) | **no per l'API** (obbligatoria solo per Alembic) | = `NZT_DATABASE_URL` (fuori prod, solo Alembic) | Ruolo migrator (solo Alembic, passo di pre-deploy); **non** impostarla sul servizio API |
-| `NZT_DATABASE_SSLMODE` | | sì (`verify-full`) | `verify-full` in prod, `disable` altrove | TLS asyncpg; in prod solo `verify-full` |
-| `NZT_DATABASE_SSL_ROOT_CERT` | | se la CA non è di sistema | — | Path CA |
-| `NZT_DATABASE_POOL_SIZE` / `NZT_DATABASE_MAX_OVERFLOW` | | | `10` / `5` | Pool |
+| `NZT_MONGODB_URI` | sì | **sì (esplicita, con credenziali, TLS non indebolito)** | servizio di test `nzt_app@127.0.0.1:57017` | Utente runtime `nzt_app` (solo CRUD sulle collection dell'API) |
+| `NZT_MONGODB_DATABASE` | | **sì (esplicita)** | `nzt_test` | Database dell'API sul cluster condiviso (`[A-Za-z0-9_-]{1,38}`) |
+| `NZT_MONGODB_MIGRATIONS_URI` | sì (solo per lo schema) | **no per l'API** (obbligatoria solo per `python -m app.schema`) | = `NZT_MONGODB_URI` (fuori prod, solo schema) | Utente `nzt_migrator`; **non** impostarla sul servizio API |
+| `NZT_MONGODB_TLS` | | sì (`true`, default in prod) | `true` in prod, `false` altrove | TLS con verifica di certificato e hostname |
+| `NZT_MONGODB_TLS_CA_FILE` | | se la CA non è di sistema | — | Path CA |
+| `NZT_MONGODB_MAX_POOL_SIZE` | | | `10` | Pool |
+| `NZT_MONGODB_TIMEOUT_MS` / `NZT_MONGODB_SERVER_SELECTION_TIMEOUT_MS` | | | `15000` / `5000` | Timeout per operazione / selezione del server |
 | `NZT_REDIS_URL` | sì | **sì (esplicita)** | `redis://127.0.0.1:56379/0` | Limiti, `jti`, marker, `state` OAuth consumati, orologio dei marker |
 | `NZT_ACCESS_TOKEN_PRIVATE_KEY_PEM` | **sì** | **sì** | effimera in dev/test | Firma access token Ed25519 |
 | `NZT_ACCESS_TOKEN_TTL_SECONDS` | | | `600` (300–600) | TTL access token |
@@ -780,17 +802,17 @@ Tutte le query passano da SQLAlchemy Core/ORM con parametri legati (prepared sta
 
 | Evento | Dove | Contenuto |
 | :--- | :--- | :--- |
-| Download autorizzato | Tabella `download_logs` (commit prima dell'emissione dell'URL) | `user_id`, `product_code`, `ip_address`, `user_agent` (≤ 512), `download_token_id`, `created_at` |
-| Reuse detection | Log applicativo `WARNING` | Testo fisso `SECURITY: refresh token reuse detected; all sessions revoked` (senza ID utente; l'utente si ricava dalle famiglie con `revoked_reason='reuse_detected'`) |
+| Download autorizzato | Collection `downloadLogs` (scrittura confermata prima dell'emissione dell'URL) | `userId`, `productCode`, `ipAddress`, `userAgent` (≤ 512), `downloadTokenId`, `createdAt` |
+| Reuse detection | Log applicativo `WARNING` | Testo fisso `SECURITY: refresh token reuse detected; all sessions revoked` (senza ID utente; l'utente si ricava dalle famiglie con `revokedReason='reuse_detected'`) |
 | Redis non disponibile | `ERROR` | Solo il tipo di eccezione |
 | Google token endpoint irraggiungibile / scambio rifiutato | `WARNING` / `INFO` | Tipo di eccezione / codice HTTP |
 | Eccezione non gestita | `ERROR` con traceback, solo lato server | Metodo e path |
 | Chiavi effimere in uso (dev/test) | `WARNING` all'avvio | — |
 | Accessi HTTP | Access log di uvicorn | IP del peer (con `--no-proxy-headers` è l'IP del proxy), metodo, path, stato |
 
-Mai registrati: password, token, cookie, body delle richieste, URL prefirmati (il portale non usa `console`, regola lint `no-console`). Lo stato delle sessioni è ricostruibile da `refresh_token_families` (`is_revoked`, `revoked_reason`, `created_at`).
+Mai registrati: password, token, cookie, body delle richieste, URL prefirmati (il portale non usa `console`, regola lint `no-console`). Lo stato delle sessioni è ricostruibile da `refreshTokenFamilies` (`isRevoked`, `revokedReason`, `createdAt`, `updatedAt`) finché il TTL non le elimina (scadenza del refresh token). Il logger `pymongo` è fissato a `WARNING` (§16.5).
 
-**Lacune (R-8):** nessun log per login falliti, mismatch di chiave DPoP sul refresh, logout, collegamenti Google; nessun log strutturato né alerting; nessuna politica di conservazione per `download_logs` (contiene IP e User-Agent, dati personali).
+**Lacune (R-8):** nessun log per login falliti, mismatch di chiave DPoP sul refresh, logout, collegamenti Google; nessun log strutturato né alerting; nessuna politica di conservazione per `downloadLogs` (contiene IP e User-Agent, dati personali).
 
 ---
 
@@ -825,7 +847,7 @@ Mai registrati: password, token, cookie, body delle richieste, URL prefirmati (i
 | Lockfile Python | `apps/api/uv.lock`; installazione con `uv sync --frozen`; Python fissato a 3.12 (`.python-version`) |
 | Script di installazione | `pnpm.onlyBuiltDependencies` consente build script solo a `esbuild` e `sharp` |
 | Dipendenze runtime del portale | `react`, `react-dom`, `@nzt/ui` (clsx, tailwind-merge, class-variance-authority), font `@fontsource`; nessun router, form library o script di terze parti |
-| Dipendenze API | FastAPI, uvicorn, SQLAlchemy, asyncpg, Alembic, pydantic(-settings), email-validator, argon2-cffi, PyJWT[crypto], cryptography, redis, httpx, boto3 |
+| Dipendenze API | FastAPI, uvicorn, PyMongo, pydantic(-settings), email-validator, argon2-cffi, PyJWT[crypto], cryptography, redis, httpx, boto3 (rimossi SQLAlchemy, asyncpg, Alembic, greenlet, Mako, MarkupSafe) |
 | CI / audit automatici | **Assenti** nel repository |
 | Audit eseguito (revisione indipendente + correzioni) | `pip-audit` su `uv.lock`: nessuna vulnerabilità. `pnpm audit`: prima 26 advisory (3 critical, 8 high, 11 moderate, 4 low); dopo l'aggiornamento di `vitest` a 4.1.12 (solo strumento di test del portale: rimossi `tinypool` e `@vitest/mocker` vulnerabili; `vite` resta 6.4.5, nessun'altra versione cambiata) restano **21** (1 critical, 8 high, 8 moderate, 4 low), **tutte in `apps/landing`** (Astro, sharp, esbuild): aggiornamento della landing da pianificare (rilevante anche per §8.3) |
 
@@ -847,7 +869,7 @@ Raccomandato: job CI che esegue test, lint, i due audit e un aggiornamento contr
 | :--- | :--- | :--- | :--- | :--- |
 | D1 | Nomi cookie | `__Host-refresh-token`, `__Host-oauth-state` con `Path=/api/v1/auth` | `__Secure-refresh-token`, `__Secure-oauth-state`, stessi attributi, host-only | I browser rifiutano `__Host-` senza `Path=/` (§8.3) |
 | D2 | Domini | `https://api.nztsolutions.com`, CSP `https://*.nztsolutions.com` | Default `.it`, tutti configurabili; CSP con origin espliciti | Landing e portale sono `.it`; `SameSite=Strict` richiede API e portale same-site |
-| D3 | `download_logs.user_id` | `NOT NULL … ON DELETE SET NULL` | `NULL`-abile, `ON DELETE SET NULL` | Clausole incompatibili; l'audit deve sopravvivere alla cancellazione |
+| D3 | `download_logs.user_id` | `NOT NULL … ON DELETE SET NULL` | `downloadLogs.userId` null ammesso; il documento di audit resta se l'utente è cancellato (§5) | Clausole incompatibili; l'audit deve sopravvivere alla cancellazione |
 | D4 | Prova DPoP | `htm`, `htu`, `jti`, `iat`, JWK | In più: solo ES256/P-256 con validazione della curva, `typ`, finestra `iat` ±60 s, `jti` monouso in Redis, `ath` obbligatorio sulle risorse; nessun `DPoP-Nonce`; errori sempre `401` | RFC 9449 (`ath` è richiesto dalla RFC per l'accesso alle risorse); difesa da replay e confusione di algoritmo |
 | D5 | Access token | RS256 o EdDSA; claim `sub, iss, exp, jti, cnf` | EdDSA (Ed25519); header `typ=at+jwt`, `kid`; claim `iat` e `iat_ms` in più; schema `Authorization` solo `DPoP` | Scelta ammessa; `iat_ms` (ms, orologio Redis) ordina il token rispetto ai marker di revoca senza falsi positivi nello stesso secondo (§9.3) |
 | D6 | Reuse detection | Revoca della famiglia e "invalida ogni sessione attiva" | Revoca di **tutte** le famiglie dell'utente + marker Redis `user_revoked_after_ms` | Rendere effettiva l'invalidazione anche degli access token già emessi (effetto collaterale R-21) |
@@ -864,43 +886,49 @@ Raccomandato: job CI che esegue test, lint, i due audit e un aggiornamento contr
 | D17 | Cookie di state OAuth | Contiene lo `state`, cifrato | AES-256-GCM con `state`, `code_verifier`, `nonce`, `exp`; in più `state` monouso registrato in Redis al callback | PKCE e nonce senza storage di sessione; il replay del cookie non raggiunge più Google |
 | D18 | OIDC | PKCE, `state` | In più: `nonce`, `email_verified` obbligatorio, `409` per altro `sub`, `403` account disattivato, `503` se non configurato | Hardening OIDC |
 | D19 | Header HTTP | Insieme della §9.1 | Identico + `Cache-Control: no-store`; il portale ha una CSP propria più restrittiva con Trusted Types | Token e URL non devono essere memorizzati in cache |
-| D20 | TLS DB | `sslmode=verify-full` | Produzione: solo `verify-full` (CONFORME; `verify-ca` non più accettato) | — |
+| D20 | TLS DB | `sslmode=verify-full` | MongoDB: TLS obbligatorio in produzione con verifica di certificato e hostname; opzioni che lo indeboliscono rifiutate all'avvio (CONFORME nella sostanza) | — |
+| D29 | Database | PostgreSQL 16 sulla rete privata, SQLAlchemy/asyncpg, Alembic | MongoDB 8 **esterno** condiviso (un database per servizio), PyMongo async, validatori `$jsonSchema` + indici applicati da `python -m app.schema` | Decisione utente: un solo servizio database da pagare per tutti i servizi. Rete: IP Access List lato cluster invece della rete privata (§16.3) |
 | D21 | Edge proxy | WAF, rate limiting L4/L7, TLS 1.3 | Nessun componente edge nel repository; TLS dall'edge Railway; rate limit applicativi | Fuori dal codice (O-1); **NON VERIFICATO** |
 | D22 | Egress confinato | Egress HTTPS confinato a Google e storage | Confinamento solo applicativo (URL da configurazione, nessun redirect); nessuna policy di rete; nessun egress verso lo storage (firma locale) | Railway non configurato nel repository |
 | D23 | Verifica integrità binario | Il client o l'interfaccia valida lo SHA-256 | Il portale mostra hash e istruzioni; nessuna verifica automatica | Il Launcher non è nel repository |
 | D24 | Python / client S3 | 3.11+, `aioboto3` o client REST | 3.12, `boto3` solo per firma locale | Nessuna I/O di rete da rendere asincrona |
 | D27 | Collegamento Google ad account locale non verificato (§5.3) | `403`, verificare prima l'account locale | **Takeover**: la credenziale locale non verificata viene neutralizzata (password, identità locale, token di verifica, tutte le sessioni) e l'account passa all'identità Google verificata | Chiude il pre-hijacking (M2): con il `403` la vittima restava esclusa per sempre |
-| D28 | Verifica email | Non prevista (solo colonna `is_verified`) | Tabella `email_verification_tokens` (migrazione `0002`), `POST /verify-email`, `POST /resend-verification`, `GET /me`, mailer Resend; pagina portale `/verifica-email` e avviso non bloccante in dashboard | Necessaria per distinguere account locali legittimi da pre-registrazioni |
-| D25 | Infrastruttura di test | testcontainers o docker-compose | `docker-compose.test.yml` + `scripts/test-services.sh` nativo | Il compose non è stato avviato nella sandbox (nessun Docker) |
-| D26 | Aggiunte di robustezza | — | `is_active` ricontrollato a ogni richiesta; limite body 16 KiB; 422 sanificati; docs disattivate in prod; `/healthz`; guardie di avvio in produzione (anche DSN/Redis espliciti, proxy fidati o opt-in, storage https); rehash trasparente; coda Argon2 limitata con `503` + `Retry-After`; CORS su tutti gli errori ed esposizione di `Retry-After` | Hardening (incluse le correzioni della revisione indipendente) |
+| D28 | Verifica email | Non prevista (solo colonna `is_verified`) | Collection `emailVerificationTokens`, `POST /verify-email`, `POST /resend-verification`, `GET /me`, mailer Resend; pagina portale `/verifica-email` e avviso non bloccante in dashboard | Necessaria per distinguere account locali legittimi da pre-registrazioni |
+| D25 | Infrastruttura di test | testcontainers o docker-compose | `docker-compose.test.yml` (MongoDB standalone con autenticazione) + `scripts/test-services.sh` nativo (replica set a nodo singolo con autenticazione e keyfile, come Atlas) | Il compose non è stato avviato nella sandbox (nessun Docker) |
+| D26 | Aggiunte di robustezza | — | `isActive` ricontrollato a ogni richiesta; limite body 16 KiB; 422 sanificati; docs disattivate in prod; `/healthz`; guardie di avvio in produzione (anche URI MongoDB/Redis espliciti, proxy fidati o opt-in, storage https); rehash trasparente; coda Argon2 limitata con `503` + `Retry-After`; CORS su tutti gli errori ed esposizione di `Retry-After` | Hardening (incluse le correzioni della revisione indipendente) |
 
 ---
 
 ## 22. Evidenze di verifica
 
-### 22.1 Backend (`apps/api`) — contro PostgreSQL 16 e Redis 7 reali (nessun mock per DB e Redis)
+### 22.1 Backend (`apps/api`) — contro MongoDB 8 e Redis 7 reali (nessun mock per DB e Redis)
+
+Migrazione a MongoDB (2026-11-18), eseguita contro `mongod` 8.0.4 in replica set a nodo singolo con autenticazione e keyfile (`scripts/test-services.sh`).
 
 | Controllo | Risultato |
 | :--- | :--- |
-| `uv run pytest -q` | **153 passed** (110 preesistenti, di cui 4 aggiornati per contratto cambiato intenzionalmente, + 43 di regressione in `test_security_fixes.py`, ognuno dei quali — salvo i controlli di non-regressione indicati nella relazione delle correzioni — fallisce sul codice precedente) |
-| `ruff check` / `ruff format --check` | Nessun problema / 41 file formattati |
-| `mypy` strict su `src/app` | Nessun errore (27 file) |
-| `alembic upgrade head` / `check` / `downgrade base` / `upgrade head` | OK, `No new upgrade operations detected.` |
-| Avvio uvicorn + `GET /healthz` | `200 {"status":"ok"}` con tutti gli header della §13.1 |
-| `docker compose -f docker-compose.test.yml config` | Valido; lo stack compose **non** è stato avviato (nessun daemon Docker) |
+| `uv run pytest -q` | **211 passed** (riferimento prima della migrazione: 184 su PostgreSQL); 3 esecuzioni consecutive identiche |
+| `ruff check` / `ruff format --check` | Nessun problema |
+| `mypy` strict su `src/app` | Nessun errore (31 file) |
+| `python -m app.schema` / `--check` | Idempotente; `nzt_test is up to date`; con l'utente applicativo: rifiuto esplicito (privilegio minimo) |
+| Migrazione dati reale PostgreSQL 16 → MongoDB (`scripts/migrate_postgres_to_mongo.py`) | Dry run, rifiuto senza TLS di default, due esecuzioni idempotenti; poi login cliente + download (entitlement migrato), login admin e `/healthz` `200` sull'API nuova |
+| `docker compose config` (stack completo e di test) | Validi; gli stack compose **non** sono stati avviati (nessun daemon Docker) |
 
 | File di test | Test | Ambito |
 | :--- | ---: | :--- |
 | `test_dpop.py` | 25 | Prova DPoP, confusione di algoritmo, `ath`, replay, autenticazione delle risorse |
+| `test_email_verification.py` | 24 | Verifica email, takeover Google, corsa login/takeover, schema della collection, mailer |
+| `test_mongo.py` | 22 | Schema idempotente e drift, validatori, unicità, privilegio minimo reale, NoSQL injection, log senza dati, uso degli indici (`explain`) |
 | `test_auth_flows.py` | 17 | Register/login/refresh/logout, attributi cookie, RTR, reuse, concorrenza |
 | `test_http_hardening.py` | 16 | Header su ogni risposta, CORS, docs, limite body, errori senza eco |
 | `test_google.py` | 13 | Authorize, state, PKCE, nonce, ID token, collegamento account |
 | `test_ratelimit.py` | 12 | Ogni limite, finestra scorrevole, fail-closed, IP e proxy fidati |
+| `test_downloads.py` | 10 | Entitlement (anche revoca immediata), audit, catalogo lato server, presign |
 | `test_openapi_config.py` | 10 | Contratti §8, configurazione, guardie di produzione, Argon2id, politica password |
-| `test_downloads.py` | 9 | Entitlement, audit, catalogo lato server, presign |
-| `test_db.py` | 8 | Migrazioni, schema, ruoli, assenza di SQL costruito con stringhe |
-| `test_security_fixes.py` | 43 | Regressioni della revisione indipendente: M1/I2 (X-Forwarded-For), L2 (tipi dei claim), L3 (marker al ms), L4 (coda Argon2), L6 (limiti Google, state monouso), I3, I5, I6, guardie di produzione |
-| **Totale** | **153** | |
+| `test_admin_auth.py` | 8 | Login admin separato, ruolo riletto, admin declassato (anche al refresh) |
+| `test_security_fixes.py` | 52 | Regressioni della revisione indipendente + guardie di produzione MongoDB (TLS, credenziali, URI dello schema) |
+| `test_pg_migration.py` | 2 | Trasformazione dei dati PostgreSQL validata dai validatori reali; idempotenza (da rimuovere con lo script dopo la migrazione) |
+| **Totale** | **211** | |
 
 Misure dal vivo (uvicorn, `NZT_TRUSTED_PROXY_CIDRS=127.0.0.1/32`, 100 login fasulli in parallelo da 100 IP distinti, `NZT_ARGON2_MAX_CONCURRENCY=2`): prima della correzione un login legittimo impiegava 1,5–6,3 s (coda illimitata, login fasulli fino a 6,5 s); dopo, il login legittimo durante il picco riceve in 0,2–0,8 s un `503` con `Retry-After: 1` e, ripetuto dopo l'attesa indicata, riesce in 1,4–1,9 s totali; i login fasulli eccedenti sono scartati in ≤ 1,6 s. Registrazioni con 32 hop `X-Forwarded-For` falsificati: prima 8/8 accettate, dopo `201, 201, 201, 429…`. Prova DPoP con `iat: NaN`: prima `500`, dopo `401`.
 
@@ -910,7 +938,7 @@ Misure dal vivo (uvicorn, `NZT_TRUSTED_PROXY_CIDRS=127.0.0.1/32`, 100 login fasu
 
 ### 22.3 End-to-end nel browser reale
 
-**66/66 controlli superati** in Chromium (Playwright) contro backend uvicorn reale, PostgreSQL 16, Redis 7, portale servito da `vite preview` con gli header di produzione e un IdP Google **simulato** (che applica PKCE S256 e credenziali client); 0 violazioni CSP/Trusted Types, 0 errori console inattesi. Rispetto alla versione precedente (65 controlli) il controllo 14b è stato invertito di proposito (ora `Retry-After` è leggibile) ed è stato aggiunto il 14c (il messaggio di 429 mostra l'attesa reale in secondi/minuti, uguale all'header).
+**66/66 controlli superati** (esecuzione **precedente alla migrazione a MongoDB**, non ripetuta dopo: il contratto HTTP dell'API è invariato e i flussi sono coperti dai test backend di §22.1) in Chromium (Playwright) contro backend uvicorn reale, PostgreSQL 16, Redis 7, portale servito da `vite preview` con gli header di produzione e un IdP Google **simulato** (che applica PKCE S256 e credenziali client); 0 violazioni CSP/Trusted Types, 0 errori console inattesi. Rispetto alla versione precedente (65 controlli) il controllo 14b è stato invertito di proposito (ora `Retry-After` è leggibile) ed è stato aggiunto il 14c (il messaggio di 429 mostra l'attesa reale in secondi/minuti, uguale all'header).
 
 Scenari: (1) rotta protetta senza sessione, 0 chiamate API, header CSP e noindex; (2) accessibilità dei form; (3) validazione password lato client; (4) registrazione: DPoP 201, web storage vuoto, `document.cookie` vuoto, chiave P-256 non estraibile, `dpop_jkt` = thumbprint del browser, attributi del cookie; (5) download: 403 senza entitlement, poi URL prefirmato + 1 riga di audit; (6) reload: un solo refresh 200; (7) marker `jkt` ⇒ `401, refresh 200, 200`; (8) due schede e reload concorrenti, 8f navigazioni che interrompono il refresh; (9) cookie rubato con chiave dell'attaccante ⇒ 401, sessione legittima intatta; (10) logout completo e replay del cookie ⇒ 401; (11) password errata: messaggio generico, nessuna chiave residua; (12) Google: callback pulito, account locale non verificato ⇒ 403, `access_denied`; (13) 404; (14) `401×5, 429`, messaggio "Riprova tra N secondi" con N = `Retry-After`; (15) riduzione movimento; (16) mobile 390 px.
 
@@ -936,16 +964,16 @@ Ordinati per priorità. "O-…" sono i punti aperti delle relazioni di implement
 | :--- | :--- | :--- | :--- | :--- |
 | R-1 | Alta | **XSS nel portale** | Lo script può usare chiave e sessione finché la pagina è aperta (non esfiltrarle) | Mantenere CSP/Trusted Types, nessuno script di terze parti, revisione delle dipendenze |
 | R-2 | Media | **Pre-hijacking: MITIGATO** (revisione **M2**: verifica email + takeover Google, §11.3). Residui: (a) nessun reset password; (b) gli account locali non verificati restano pienamente utilizzabili (decisione utente); (c) una vittima che apre il link di verifica di un account che **non** ha creato verifica un account di cui l'attaccante conosce la password; la verifica **non** revoca le sessioni esistenti dell'attaccante (il takeover Google sì) | Un pre-registratore conserva l'account finché la vittima non usa Google; nel caso (c) l'account diventa "verificato" e il successivo accesso Google si limita a collegarsi | Testo dell'email ("Se non hai creato tu questo account ignora questa email"), TTL breve (24 h), token monouso; implementare il reset password (che revochi tutte le sessioni); non concedere entitlement ad account non verificati |
-| R-3 | Alta | **Deploy non definito** (O-1, O-2, O-4): Dockerfile, servizi Railway, CIDR proxy, TLS DB su rete privata, esposizione pubblica di Postgres/Redis | Configurazioni errate possono annullare limiti per IP, audit, isolamento della rete | Seguire la checklist §24.6; verificare il peer reale dell'edge |
+| R-3 | Alta | **Deploy non definito** (O-1, O-2, O-4): servizi Railway, CIDR proxy, **IP Access List del cluster MongoDB esterno** (non è sulla rete privata), esposizione pubblica di Redis | Configurazioni errate possono annullare limiti per IP, audit, isolamento della rete | Seguire la checklist §24.6; verificare il peer reale dell'edge |
 | R-4 | Alta (disponibilità) | **Finestra reload-durante-refresh** (O-P1) | Raro falso positivo di reuse ⇒ revoca di tutte le sessioni dell'utente | **Decisione utente pendente:** regola di grazia nel backend (riuso con la chiave della famiglia entro pochi secondi = benigno) |
 | R-5 | Media | Nessuna durata assoluta della sessione (O-6) | Una sessione usata almeno una volta a settimana dura indefinitamente | Durata massima della famiglia (es. 30 giorni) |
 | R-6 | Media | Rotazione della chiave di firma: un solo `kid` (O-6) | La rotazione invalida tutti gli access token (il portale recupera con un refresh) | Supporto a più chiavi di verifica / JWKS interno |
 | R-7 | Media | Launcher non firmato (O-8); hash solo mostrato | Manomissione non rilevata se l'utente non verifica | Firma Authenticode; pubblicare l'hash reale |
-| R-8 | Media | Logging di sicurezza minimo, nessun alerting, nessuna conservazione definita per `download_logs` | Indagini difficili; dati personali senza scadenza | Log strutturati (login falliti, mismatch, logout, reuse con ID utente), alert su reuse, politica di retention |
+| R-8 | Media | Logging di sicurezza minimo, nessun alerting, nessuna conservazione definita per `downloadLogs` | Indagini difficili; dati personali senza scadenza | Log strutturati (login falliti, mismatch, logout, reuse con ID utente), alert su reuse, politica di retention |
 | R-9 | Media | Nessun rate limit sul logout (O-9); nessun WAF; nessun limite globale (solo per IP/email/utente) | Superficie DoS residua (i limiti Google per IP e la coda Argon2 limitata sono ora presenti) | WAF/limiti all'edge (es. Cloudflare davanti a Railway) |
 | R-10 | Media | Blocco mirato del login (5/min per email) | Un attaccante può impedire il login di una vittima nota | Valutare limiti progressivi o CAPTCHA dopo soglia |
 | R-11 | Media | Nessuna CI; E2E fuori dal repository (O-P8) | Regressioni di sicurezza non intercettate | Pipeline con test backend/portale, E2E Playwright, audit dipendenze |
-| R-12 | Media | Nessun provisioning degli entitlement (O-7) | Concessioni via SQL manuale, soggette a errori | Strumento amministrativo con audit |
+| R-12 | Media | Nessun provisioning degli entitlement (O-7) | Concessioni con update manuali sul documento utente (`entitlements[]`), soggette a errori | Strumento amministrativo con audit |
 | R-13 | — | ~~`Retry-After` non esposto via CORS (O-P2)~~ **Risolto** | Il portale mostra l'attesa reale | — |
 | R-14 | Bassa | Nessun endpoint `/me` (O-P4) | La dashboard non mostra l'email | Aggiungere `GET /api/v1/me` protetto da DPoP |
 | R-15 | Bassa | `code` OAuth nei log di accesso dell'hosting statico | Codice monouso, legato a PKCE e allo state di 5 min | Accettato |
@@ -953,9 +981,9 @@ Ordinati per priorità. "O-…" sono i punti aperti delle relazioni di implement
 | R-17 | Bassa | Browser senza Web Locks o senza IndexedDB | Possibili logout spuri / nessuna sessione al reload | Accettato (browser evergreen supportati) |
 | R-18 | Bassa (Media se la landing resta vulnerabile) | Cookie tossing da sottodominio fratello (revisione **L5**, non corretta: decisione utente) | Login CSRF via cookie di state OAuth e logout forzato (§8.3); nessuna session fixation | Decidere tra `__Host-` con `Path=/`, rifiuto dei cookie duplicati, state legato al `jkt`; nel frattempo nessun contenuto di terzi su `*.nztsolutions.it` e landing aggiornata |
 | R-19 | — | ~~Guardie di produzione incomplete~~ **Risolto**: DSN, Redis URL, proxy fidati (o opt-in), storage https e `verify-full` sono ora obbligatori | — | — |
-| R-21 | Bassa | **Replay di un refresh token storico** (revisione **L1**, non corretta: decisione utente) | Un valore già usato, anche scaduto, ripresentato con qualunque chiave revoca tutte le sessioni della vittima, all'infinito (§9.2) | Classificare `expires_at ≤ now()` prima di `is_used`; eliminare le righe usate/scadute; valutare revoca della sola famiglia + alert |
+| R-21 | Bassa | **Replay di un refresh token storico** (revisione **L1**, non corretta: decisione utente) | Un valore già usato, ripresentato con qualunque chiave entro la sua validità (7 giorni; poi il TTL lo elimina), revoca tutte le sessioni della vittima (§9.2) | Valutare revoca della sola famiglia + alert |
 | R-22 | Info | Enumerazione via registrazione (revisione **I1**, non corretta: richiede verifica email) | `201` vs `400 Registration failed` rivela se un'email esiste (3/h per IP) | Con la verifica email: risposta sempre `202` e invio di una mail |
-| R-23 | Info | Privilegi del ruolo applicativo (revisione **I4**, non corretta: decisione utente) | `nzt_app` può `UPDATE`/`DELETE` su `download_logs` e `UPDATE` su `alembic_version`: l'audit non è append-only per l'applicazione | Migrazione: `REVOKE UPDATE, DELETE ON download_logs FROM nzt_app; REVOKE ALL ON alembic_version FROM nzt_app;` |
+| R-23 | Info | Privilegi del ruolo applicativo (revisione **I4**, non corretta: decisione utente) | `nzt_app` può `update`/`remove` su `downloadLogs`: l'audit non è append-only per l'applicazione | Nel ruolo `nztApp` limitare `downloadLogs` alle azioni `find` e `insert` (`scripts/db/create_roles.py` / Atlas) |
 | R-20 | Bassa | Branding del pulsante Google monocromatico (O-P7) | Possibile non conformità alle linee guida Google | Conferma utente |
 
 Gli endpoint e i flussi non sono stati validati con Google, R2 e Railway reali (§22.5).
@@ -967,23 +995,42 @@ Gli endpoint e i flussi non sono stati validati con Google, R2 e Railway reali (
 ### 24.1 Avvio dell'API
 
 ```bash
-# migrazioni (passo separato, ruolo migrator)
-cd apps/api && NZT_MIGRATIONS_DATABASE_URL=... uv run alembic upgrade head
+# schema MongoDB: validatori + indici (passo separato, utente nzt_migrator; idempotente)
+cd apps/api && NZT_MONGODB_MIGRATIONS_URI=... NZT_MONGODB_DATABASE=nzt uv run python -m app.schema
+# (in CI: ... python -m app.schema --check  => exit 1 se il database differisce dal codice)
 
-# processo applicativo (ruolo nzt_app)
+# processo applicativo (utente nzt_app)
 uvicorn app.main:create_app --factory --no-proxy-headers --host 0.0.0.0 --port $PORT
 ```
 
 `--no-proxy-headers` è **obbligatorio** (§15). Facoltativo: `--no-server-header` per non esporre `server: uvicorn` (raccomandazione, non verificata nel progetto).
 
-### 24.2 Database
+### 24.2 Database (MongoDB esterno)
+
+1. Sul cluster (condiviso con gli altri servizi) creare un **database dedicato** `nzt` e:
+   * **Atlas** — *Database Access → Custom Roles*: ruolo `nztApp` con le azioni `find`, `insert`, `update`, `remove` su ciascuna collection `nzt.users`, `nzt.refreshTokenFamilies`, `nzt.refreshTokens`, `nzt.emailVerificationTokens`, `nzt.downloadLogs` (non sull'intero database). *Database Users*: `nzt_app` con il solo ruolo `nztApp`; `nzt_migrator` con `dbAdmin@nzt` + `readWrite@nzt`. Password generate, autenticazione SCRAM.
+   * **MongoDB autogestito** — una sola volta, con un utente amministratore:
+     ```bash
+     cd apps/api && NZT_MONGODB_ROOT_URI='<uri admin>' NZT_DB_NAME=nzt \
+       NZT_MIGRATOR_PASSWORD='<segreto>' NZT_APP_PASSWORD='<segreto>' \
+       uv run python scripts/db/create_roles.py
+     ```
+2. Rete: *Network Access / IP Access List* limitata agli IP di uscita del servizio API (o private endpoint); mai `0.0.0.0/0`.
+3. `python -m app.schema` con `NZT_MONGODB_MIGRATIONS_URI` (utente `nzt_migrator`).
+4. Sull'API: `NZT_MONGODB_URI` (utente `nzt_app`, `mongodb+srv://…`, TLS implicito) e `NZT_MONGODB_DATABASE=nzt`. In produzione TLS con verifica completa è obbligatorio.
+
+**Migrazione dei dati da PostgreSQL (una tantum).** Con PostgreSQL ancora raggiungibile:
 
 ```bash
-psql -v ON_ERROR_STOP=1 -v db_name=nzt -v migrator_password='<segreto>' -v app_password='<segreto>' \
-     -f apps/api/scripts/db/roles.sql          # una sola volta, come superuser/admin
+cd apps/api
+export NZT_PG_SOURCE_DSN='postgresql://nzt_app:...@<host>:5432/nzt'   # basta un ruolo in sola lettura
+export NZT_MONGODB_MIGRATIONS_URI='mongodb+srv://nzt_migrator:...@<cluster>/?authSource=admin'
+export NZT_MONGODB_DATABASE=nzt
+uv run --with asyncpg python scripts/migrate_postgres_to_mongo.py --dry-run   # conteggi, nessuna scrittura
+uv run --with asyncpg python scripts/migrate_postgres_to_mongo.py            # applica lo schema, copia, verifica
 ```
 
-Poi impostare `NZT_DATABASE_URL` (utente `nzt_app`) e `NZT_MIGRATIONS_DATABASE_URL` (utente `nzt_migrator`) e configurare TLS `verify-full` con CA (`NZT_DATABASE_SSL_ROOT_CERT` se la CA non è di sistema; in produzione non sono accettati altri modi).
+Snapshot coerente (una transazione PostgreSQL in sola lettura), stessi UUID, idempotente (rieseguibile). Copia utenti (con identità ed entitlement), token di verifica pendenti e audit dei download; **non** copia le sessioni: ogni utente rifà il login una volta. Dopo il passaggio eliminare lo script, `tests/test_pg_migration.py` e il servizio PostgreSQL.
 
 ### 24.3 Generazione delle chiavi
 
@@ -1000,34 +1047,38 @@ Rotazione: nuova `ACCESS_TOKEN_PRIVATE_KEY_PEM` ⇒ tutti gli access token in ci
 ### 24.4 Configurazione Railway (da fare, **NON VERIFICATO**)
 
 1. Domini personalizzati `nztsolutions.it`, `clienti.nztsolutions.it`, `api.nztsolutions.it` (non i domini generati, §3.1).
-2. PostgreSQL e Redis raggiungibili **solo** dalla rete privata: disattivare eventuali proxy TCP pubblici.
+2. Redis raggiungibile **solo** dalla rete privata (nessun proxy TCP pubblico); MongoDB esterno con IP Access List ristretta (§24.2).
 3. `NZT_TRUSTED_PROXY_CIDRS` = range da cui l'edge Railway si connette al container, verificato osservando il peer reale (obbligatorio in produzione; solo se l'API è esposta senza proxy usare invece `NZT_DIRECT_CLIENT_CONNECTIONS=true`).
 4. Servizio statico del portale che emetta gli header di `deploy/Caddyfile` (es. container Caddy) con fallback SPA; build con `VITE_API_BASE_URL=https://api.nztsolutions.it`.
-5. Migrazioni come comando di pre-deploy con l'URL del migrator; il servizio API non deve ricevere `NZT_MIGRATIONS_DATABASE_URL`.
+5. `python -m app.schema` come comando di pre-deploy con l'URI dello schema; il servizio API non deve ricevere `NZT_MONGODB_MIGRATIONS_URI`.
 6. Variabili segrete solo come variabili di servizio Railway, mai nel repository.
 
 ### 24.5 Risposta a incidenti
 
-**Che cosa fa da sola la reuse detection.** Se un refresh token già consumato viene ripresentato (furto del cookie o corsa client), l'API revoca tutte le famiglie dell'utente (`revoked_reason='reuse_detected'`), imposta `user_revoked_after_ms:{user_id}` (gli access token emessi smettono di funzionare entro la richiesta successiva), cancella il cookie e registra il warning `SECURITY: refresh token reuse detected`. L'utente deve rifare il login su ogni dispositivo.
+**Che cosa fa da sola la reuse detection.** Se un refresh token già consumato viene ripresentato (furto del cookie o corsa client), l'API revoca tutte le famiglie dell'utente (`revokedReason='reuse_detected'`), imposta `user_revoked_after_ms:{user_id}` (gli access token emessi smettono di funzionare entro la richiesta successiva), cancella il cookie e registra il warning `SECURITY: refresh token reuse detected`. L'utente deve rifare il login su ogni dispositivo.
 
 Individuare gli eventi recenti:
 
-```sql
-SELECT user_id, count(*), max(created_at) FROM refresh_token_families
-WHERE revoked_reason = 'reuse_detected' GROUP BY user_id ORDER BY 3 DESC;
+```js
+// mongosh, utente nzt_migrator (o un utente di sola lettura)
+db.refreshTokenFamilies.aggregate([
+  { $match: { revokedReason: "reuse_detected" } },
+  { $group: { _id: "$userId", n: { $sum: 1 }, last: { $max: "$updatedAt" } } },
+  { $sort: { last: -1 } } ])
 ```
 
 **Disconnettere tutte le sessioni di un utente (sospetto furto).** Non esiste un endpoint amministrativo; con un ruolo amministrativo:
 
-```sql
-UPDATE refresh_token_families SET is_revoked = TRUE, revoked_reason = 'admin_revoked'
-WHERE user_id = '<uuid>' AND is_revoked = FALSE;
+```js
+db.refreshTokenFamilies.updateMany(
+  { userId: UUID("<uuid>"), isRevoked: false },
+  { $set: { isRevoked: true, revokedReason: "admin_revoked", updatedAt: new Date() } })
 ```
 ```bash
 redis-cli SET user_revoked_after_ms:<uuid> "$(( $(date +%s) * 1000 + 999 ))" EX 605   # ms; TTL = TTL access token + 5 s
 ```
 
-**Bloccare un utente:** `UPDATE users SET is_active = FALSE WHERE id = '<uuid>';` — effetto immediato: ogni richiesta protetta rilegge `is_active`, la rotazione fallisce, il login risponde con l'errore generico, Google risponde `403 Account is disabled`. Riattivando l'utente le famiglie revocate restano revocate.
+**Bloccare un utente:** `db.users.updateOne({ _id: UUID("<uuid>") }, { $set: { isActive: false, updatedAt: new Date() } })` — effetto immediato: ogni richiesta protetta rilegge `isActive`, la rotazione fallisce, il login risponde con l'errore generico, Google risponde `403 Account is disabled`. Riattivando l'utente le famiglie revocate restano revocate.
 
 **Sospetta compromissione di una chiave server:** firma access token ⇒ rotazione (§24.3); chiave state OAuth ⇒ rotazione; credenziali storage ⇒ revoca del token R2 e nuova coppia; DB/Redis ⇒ cambio password e riavvio.
 
@@ -1035,21 +1086,22 @@ redis-cli SET user_revoked_after_ms:<uuid> "$(( $(date +%s) * 1000 + 999 ))" EX 
 
 - [ ] `NZT_ENVIRONMENT=production` (le guardie di avvio diventano attive, `/docs` e `/openapi.json` spariscono).
 - [ ] Chiavi reali per firma token e state OAuth; credenziali Google con redirect URI `https://clienti.nztsolutions.it/auth/google/callback` registrato.
-- [ ] `NZT_DATABASE_URL`, `NZT_REDIS_URL` impostate (ora imposte dalle guardie); `NZT_MIGRATIONS_DATABASE_URL` solo nel passo di migrazione, non sul servizio API; `roles.sql` eseguito; TLS DB `verify-full` verificato.
-- [ ] `NZT_TRUSTED_PROXY_CIDRS` impostato (imposto dalle guardie, salvo opt-in `NZT_DIRECT_CLIENT_CONNECTIONS=true`) e verificato (un login da IP noto deve comparire con quell'IP in `download_logs` dopo un download di prova).
+- [ ] `NZT_MONGODB_URI`, `NZT_MONGODB_DATABASE`, `NZT_REDIS_URL` impostate (imposte dalle guardie); `NZT_MONGODB_MIGRATIONS_URI` solo nel passo di schema, non sul servizio API; ruolo `nztApp` e utenti creati (§24.2); `python -m app.schema --check` verde; TLS verso MongoDB verificato.
+- [ ] `NZT_TRUSTED_PROXY_CIDRS` impostato (imposto dalle guardie, salvo opt-in `NZT_DIRECT_CLIENT_CONNECTIONS=true`) e verificato (un login da IP noto deve comparire con quell'IP in `downloadLogs` dopo un download di prova).
 - [ ] `NZT_STORAGE_ENDPOINT_URL` sull'host S3 di R2; credenziali di sola lettura limitate al bucket; bucket non pubblico; `NZT_LAUNCHER_VERSION` e `NZT_LAUNCHER_SHA256` reali; download di prova completato e hash verificato.
 - [ ] `VITE_API_BASE_URL` = `NZT_API_PUBLIC_BASE_URL`; header del portale presenti come header HTTP (CSP, `X-Robots-Tag`, `frame-ancestors`).
-- [ ] Postgres e Redis non raggiungibili da Internet.
+- [ ] Redis non raggiungibile da Internet; cluster MongoDB con IP Access List ristretta (nessun `0.0.0.0/0`).
+- [ ] Dati PostgreSQL migrati (§24.2), poi script di migrazione e servizio PostgreSQL rimossi.
 - [ ] Uvicorn avviato con `--no-proxy-headers`.
-- [ ] Test backend (153) e portale (110) verdi sul commit da rilasciare; `pnpm audit --prod` e `pip-audit` senza vulnerabilità aperte.
+- [ ] Test backend (211) e portale (110) verdi sul commit da rilasciare; `pnpm audit --prod` e `pip-audit` senza vulnerabilità aperte.
 - [ ] Prova manuale end-to-end in produzione: registrazione, login, reload, Google, download, logout.
-- [ ] Decisione presa su O-P1 (finestra di grazia), verifica email (R-2/M2), replay di token storici (R-21/L1), cookie tossing (R-18/L5), privilegi su `download_logs` (R-23/I4).
+- [ ] Decisione presa su O-P1 (finestra di grazia), verifica email (R-2/M2), replay di token storici (R-21/L1), cookie tossing (R-18/L5), privilegi su `downloadLogs` (R-23/I4).
 
 ---
 
 ## Appendice A — Endpoint dell'API
 
-Tutte le risposte d'errore hanno body `{"detail": …}` e, per gli origin del portale, gli header CORS (incluso `Access-Control-Expose-Headers: Retry-After`). Valgono per ogni endpoint: `413` (body > 16 KiB), `500` generico, `503 Service temporarily unavailable` + `Retry-After: 5` se Redis non risponde sugli endpoint che lo usano; register/login: `503 Service busy, please retry shortly` + `Retry-After: 1` se la coda Argon2 è piena. Le risposte con `401` DPoP portano `WWW-Authenticate` (§7.4).
+Tutte le risposte d'errore hanno body `{"detail": …}` e, per gli origin del portale, gli header CORS (incluso `Access-Control-Expose-Headers: Retry-After`). Valgono per ogni endpoint: `413` (body > 16 KiB), `500` generico, `503 Service temporarily unavailable` + `Retry-After: 5` se Redis o MongoDB non rispondono (MongoDB: nessun primario, rete, timeout); register/login: `503 Service busy, please retry shortly` + `Retry-After: 1` se la coda Argon2 è piena. Le risposte con `401` DPoP portano `WWW-Authenticate` (§7.4).
 
 | Metodo e path | Autenticazione | Rate limit | Successo | Errori |
 | :--- | :--- | :--- | :--- | :--- |
@@ -1079,7 +1131,9 @@ Tutte le risposte d'errore hanno body `{"detail": …}` e, per gli origin del po
 | `apps/api/src/app/services/sessions.py` | Famiglie, RTR atomica, reuse detection, logout, marker |
 | `apps/api/src/app/services/google.py` | OIDC: URL di autorizzazione, scambio codice, verifica ID token, cache JWKS |
 | `apps/api/src/app/services/storage.py` | Catalogo prodotti, presign SigV4 |
-| `apps/api/src/app/deps.py` | Autenticazione delle risorse, `require_entitlement` |
+| `apps/api/src/app/deps.py` | Autenticazione delle risorse (una lettura dell'utente per richiesta), ruolo admin, `require_entitlement` |
+| `apps/api/src/app/db.py` | Client MongoDB (TLS, `w: majority`, timeout), nomi delle collection, filtro dell'identità, logger `pymongo` a WARNING |
+| `apps/api/src/app/schema.py` | Validatori `$jsonSchema`, indici, TTL, `python -m app.schema [--check]` |
 | `apps/api/src/app/routers/*.py` | Endpoint e ordine dei controlli |
 | `apps/api/src/app/cookies.py` | Rendering esatto dei cookie |
 | `apps/api/src/app/client_ip.py` | IP client e proxy fidati |
@@ -1087,7 +1141,7 @@ Tutte le risposte d'errore hanno body `{"detail": …}` e, per gli origin del po
 | `apps/api/src/app/middleware.py` | Header di sicurezza, guardia errori (dentro e fuori CORS), limite body |
 | `apps/api/src/app/errors.py` | Handler 422/429/503, `WWW-Authenticate` |
 | `apps/api/src/app/main.py` | Factory, CORS, ordine dei middleware |
-| `apps/api/scripts/db/roles.sql` | Ruoli a privilegio minimo |
+| `apps/api/scripts/db/create_roles.py` | Utenti MongoDB a privilegio minimo (ruolo `nztApp` per collection) |
 | `apps/portal/src/auth/*` | Chiave DPoP, prove, token in memoria, orchestrazione sessione |
 | `apps/portal/src/api/http.ts` | Client API, DPoP, `keepalive`, nessun log |
 | `apps/portal/src/lib/{locks,safeUrls,oauthCallback,passwordPolicy}.ts` | Web Locks, validazione URL, pulizia callback, politica password |

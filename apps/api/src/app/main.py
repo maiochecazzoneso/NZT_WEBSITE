@@ -13,7 +13,7 @@ from redis.asyncio import Redis
 
 from app.client_ip import ClientIPResolver
 from app.config import Settings, get_settings
-from app.db import create_engine, create_sessionmaker
+from app.db import Collections, create_client
 from app.deps import Services
 from app.errors import install_error_handlers
 from app.middleware import (
@@ -38,7 +38,8 @@ logger = logging.getLogger("app")
 def build_services(
     settings: Settings, *, http_transport: httpx.AsyncBaseTransport | None = None
 ) -> Services:
-    engine = create_engine(settings)
+    mongo = create_client(settings)
+    db = Collections.of(mongo[settings.mongodb_database])
     redis = Redis.from_url(
         settings.redis_url.get_secret_value(),
         decode_responses=True,
@@ -58,8 +59,8 @@ def build_services(
     )
     return Services(
         settings=settings,
-        engine=engine,
-        sessionmaker=create_sessionmaker(engine),
+        mongo=mongo,
+        db=db,
         redis=redis,
         http=http,
         passwords=PasswordService(
@@ -72,7 +73,10 @@ def build_services(
             iat_leeway=settings.dpop_iat_leeway_seconds,
         ),
         sessions=SessionService(
-            tokens=tokens, redis=redis, refresh_ttl_seconds=settings.refresh_token_ttl_seconds
+            tokens=tokens,
+            redis=redis,
+            db=db,
+            refresh_ttl_seconds=settings.refresh_token_ttl_seconds,
         ),
         rate_limiter=RateLimiter(redis),
         client_ip=ClientIPResolver(settings.trusted_proxy_cidrs),
@@ -95,14 +99,13 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         services = build_services(settings, http_transport=http_transport)
         app.state.services = services
-        app.state.sessionmaker = services.sessionmaker
         try:
             yield
         finally:
             await services.http.aclose()
             await services.mailer.aclose()
             await services.redis.aclose()
-            await services.engine.dispose()
+            await services.mongo.close()
 
     docs_enabled = not settings.is_production
     app = FastAPI(

@@ -6,30 +6,27 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
-import asyncpg
 import httpx
 import pytest
-from fastapi import FastAPI
 
-from app.deps import has_active_entitlement
+from app.db import Collections
+from app.deps import AuthenticatedUser, Entitlement, has_active_entitlement
 from app.services.storage import Product, artifact_catalog
-from tests.conftest import DEFAULT_IP, download, grant, register
+from tests.conftest import DEFAULT_IP, download, grant, one, only_user_id, register
 from tests.helpers import DPoPKey
 
 LAUNCHER_SHA = "4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a"
 
 
-async def _user(
-    client: httpx.AsyncClient, conn: asyncpg.Connection
-) -> tuple[DPoPKey, str, uuid.UUID]:
+async def _user(client: httpx.AsyncClient, db: Collections) -> tuple[DPoPKey, str, uuid.UUID]:
     key = DPoPKey()
     resp = await register(client, key)
-    return key, resp.json()["access_token"], await conn.fetchval("SELECT id FROM users")
+    return key, resp.json()["access_token"], await only_user_id(db)
 
 
-async def test_download_allowed(client: httpx.AsyncClient, migrator_conn: asyncpg.Connection):
-    key, token, user_id = await _user(client, migrator_conn)
-    await grant(migrator_conn, user_id)
+async def test_download_allowed(client: httpx.AsyncClient, mongo: Collections):
+    key, token, user_id = await _user(client, mongo)
+    await grant(mongo, user_id)
     resp = await client.get(
         "/api/v1/downloads/launcher?version=../../etc/passwd&key=evil",
         headers={
@@ -57,12 +54,14 @@ async def test_download_allowed(client: httpx.AsyncClient, migrator_conn: asyncp
     assert len(q["X-Amz-Signature"][0]) == 64
     assert q["response-content-disposition"] == ['attachment; filename="NZT-Launcher.exe"']
 
-    log = await migrator_conn.fetchrow("SELECT * FROM download_logs")
-    assert log["user_id"] == user_id
-    assert log["product_code"] == "launcher_core"
-    assert str(log["ip_address"]) == DEFAULT_IP
-    assert log["user_agent"] == "NZT-Test/1.0"
-    assert len(log["download_token_id"]) == 32
+    log = await one(mongo.download_logs)
+    assert isinstance(log["_id"], uuid.UUID)
+    assert log["userId"] == user_id
+    assert log["productCode"] == "launcher_core"
+    assert log["ipAddress"] == DEFAULT_IP
+    assert log["userAgent"] == "NZT-Test/1.0"
+    assert len(log["downloadTokenId"]) == 32
+    assert log["createdAt"].tzinfo is not None
 
 
 @pytest.mark.parametrize(
@@ -76,53 +75,69 @@ async def test_download_allowed(client: httpx.AsyncClient, migrator_conn: asyncp
 )
 async def test_entitlement_matrix(
     client: httpx.AsyncClient,
-    migrator_conn: asyncpg.Connection,
+    mongo: Collections,
     is_enabled: bool,
     valid_until_delta: timedelta | None,
     expected: int,
 ):
-    key, token, user_id = await _user(client, migrator_conn)
+    key, token, user_id = await _user(client, mongo)
     valid_until = datetime.now(UTC) + valid_until_delta if valid_until_delta else None
-    await grant(migrator_conn, user_id, is_enabled=is_enabled, valid_until=valid_until)
+    await grant(mongo, user_id, is_enabled=is_enabled, valid_until=valid_until)
     resp = await download(client, key, token)
     assert resp.status_code == expected
     if expected == 403:
         assert resp.json() == {"detail": "User does not have active entitlement for launcher_core"}
-        assert await migrator_conn.fetchval("SELECT count(*) FROM download_logs") == 0
+        assert await mongo.download_logs.count_documents({}) == 0
     else:
-        assert await migrator_conn.fetchval("SELECT count(*) FROM download_logs") == 1
+        assert await mongo.download_logs.count_documents({}) == 1
 
 
-async def test_entitlement_missing_or_other_product(
-    client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
-):
-    key, token, user_id = await _user(client, migrator_conn)
+async def test_entitlement_missing_or_other_product(client: httpx.AsyncClient, mongo: Collections):
+    key, token, user_id = await _user(client, mongo)
     resp = await download(client, key, token)
     assert resp.status_code == 403
     assert resp.json() == {"detail": "User does not have active entitlement for launcher_core"}
-    await grant(migrator_conn, user_id, "nzt_suite")
+    await grant(mongo, user_id, "nzt_suite")
     assert (await download(client, key, token)).status_code == 403
 
 
-async def test_require_entitlement_helper(app: FastAPI, migrator_conn: asyncpg.Connection):
-    user_id = uuid.uuid4()
-    await migrator_conn.execute("INSERT INTO users (id, email) VALUES ($1, 'e@d.com')", user_id)
-    await grant(migrator_conn, user_id, "nzt_suite")
-    async with app.state.sessionmaker() as db:
-        assert await has_active_entitlement(db, user_id, "nzt_suite")
-        assert not await has_active_entitlement(db, user_id, "launcher_core")
+def test_require_entitlement_helper():
+    now = datetime.now(UTC)
+    user = AuthenticatedUser(
+        id=uuid.uuid4(),
+        email="e@d.com",
+        jkt="x",
+        role="customer",
+        is_verified=True,
+        entitlements=(
+            Entitlement("nzt_suite", True, None),
+            Entitlement("launcher_core", True, now - timedelta(seconds=1)),
+            Entitlement("other", False, None),
+        ),
+    )
+    assert has_active_entitlement(user, "nzt_suite", now)
+    assert not has_active_entitlement(user, "launcher_core", now)  # expired
+    assert not has_active_entitlement(user, "other", now)  # disabled
+    assert not has_active_entitlement(user, "missing", now)
 
 
-async def test_audit_rows_survive_user_deletion(
-    client: httpx.AsyncClient, migrator_conn: asyncpg.Connection
+async def test_revoked_entitlement_takes_effect_on_next_request(
+    client: httpx.AsyncClient, mongo: Collections
 ):
-    key, token, user_id = await _user(client, migrator_conn)
-    await grant(migrator_conn, user_id)
+    key, token, user_id = await _user(client, mongo)
+    await grant(mongo, user_id)
     assert (await download(client, key, token)).status_code == 200
-    await migrator_conn.execute("DELETE FROM users WHERE id = $1", user_id)
-    row = await migrator_conn.fetchrow("SELECT user_id, product_code FROM download_logs")
-    assert row["user_id"] is None
-    assert row["product_code"] == "launcher_core"
+    await mongo.users.update_one({"_id": user_id}, {"$set": {"entitlements.$[].isEnabled": False}})
+    assert (await download(client, key, token)).status_code == 403
+
+
+async def test_audit_rows_survive_user_deletion(client: httpx.AsyncClient, mongo: Collections):
+    key, token, user_id = await _user(client, mongo)
+    await grant(mongo, user_id)
+    assert (await download(client, key, token)).status_code == 200
+    await mongo.users.delete_one({"_id": user_id})
+    log = await one(mongo.download_logs)  # audit trail is independent from the user
+    assert log["productCode"] == "launcher_core"
 
 
 def test_catalog_is_server_side_only(settings):  # type: ignore[no-untyped-def]

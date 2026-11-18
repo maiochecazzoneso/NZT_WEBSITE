@@ -1,55 +1,60 @@
 #!/usr/bin/env bash
-# Start/stop throwaway PostgreSQL 16 + Redis 7 for the test-suite using the NATIVE
-# binaries (for sandboxes/CI without a Docker daemon).
+# Start/stop throwaway MongoDB 8 + Redis 7 for the test-suite using the NATIVE binaries
+# (for sandboxes/CI without a Docker daemon).
 # On a normal developer machine prefer:  docker compose -f docker-compose.test.yml up -d
 # Both expose the same endpoints:
-#   PostgreSQL 127.0.0.1:55432  db=nzt_test  roles nzt_migrator / nzt_app
-#   Redis      127.0.0.1:56379
+#   MongoDB 127.0.0.1:57017  single-node replica set "rs0" with authentication (like Atlas);
+#           TTL monitor off so that documents expired on purpose stay during a test
+#           db=nzt_test  users nzt_migrator / nzt_app (scripts/db/create_roles.py)
+#   Redis   127.0.0.1:56379
 #
 # Usage: scripts/test-services.sh start|stop|status
+# MONGOD=/path/to/mongod if it is not on PATH. TEST ONLY credentials.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+API_DIR="$(dirname "$HERE")"
 STATE_DIR="${NZT_TEST_STATE_DIR:-/tmp/nzt-api-test-services}"
-PG_BIN="${PG_BIN:-/usr/lib/postgresql/16/bin}"
-PG_PORT="${NZT_TEST_PG_PORT:-55432}"
+MONGOD="${MONGOD:-mongod}"
+MONGO_PORT="${NZT_TEST_MONGO_PORT:-57017}"
 REDIS_PORT="${NZT_TEST_REDIS_PORT:-56379}"
-PG_DATA="$STATE_DIR/pgdata"
-PG_USER="${PG_OS_USER:-postgres}"
+MONGO_DATA="$STATE_DIR/mongodata"
+ROOT_URI="mongodb://root:root_test@127.0.0.1:$MONGO_PORT/?authSource=admin&directConnection=true"
 
-as_pg() {
-  if [ "$(id -u)" -eq 0 ]; then
-    runuser -u "$PG_USER" -- "$@"
-  else
-    "$@"
-  fi
-}
+py() { (cd "$API_DIR" && uv run --quiet python "$@"); }
 
 start() {
   mkdir -p "$STATE_DIR"
-  chmod 777 "$STATE_DIR"
-  if [ ! -d "$PG_DATA" ]; then
-    mkdir -p "$PG_DATA"
-    [ "$(id -u)" -eq 0 ] && chown "$PG_USER" "$PG_DATA"
-    echo postgres_test >"$STATE_DIR/pwfile"
-    [ "$(id -u)" -eq 0 ] && chown "$PG_USER" "$STATE_DIR/pwfile"
-    as_pg "$PG_BIN/initdb" -D "$PG_DATA" -U postgres --auth-local=trust \
-      --auth-host=scram-sha-256 --pwfile="$STATE_DIR/pwfile" -E UTF8 >/dev/null
-    rm -f "$STATE_DIR/pwfile"
+  FRESH=0
+  if [ ! -d "$MONGO_DATA" ]; then
+    mkdir -p "$MONGO_DATA"
+    openssl rand -base64 756 >"$STATE_DIR/keyfile"
+    chmod 400 "$STATE_DIR/keyfile"
     FRESH=1
-  else
-    FRESH=0
   fi
-  if ! as_pg "$PG_BIN/pg_ctl" -D "$PG_DATA" status >/dev/null 2>&1; then
-    as_pg "$PG_BIN/pg_ctl" -D "$PG_DATA" -w -l "$STATE_DIR/postgres.log" \
-      -o "-c listen_addresses=127.0.0.1 -p $PG_PORT -k $STATE_DIR -c fsync=off" start >/dev/null
+  if ! py -c "import pymongo,sys; pymongo.MongoClient('mongodb://127.0.0.1:$MONGO_PORT/?directConnection=true', serverSelectionTimeoutMS=500).admin.command('ping')" >/dev/null 2>&1; then
+    "$MONGOD" --replSet rs0 --bind_ip 127.0.0.1 --port "$MONGO_PORT" --dbpath "$MONGO_DATA" \
+      --auth --keyFile "$STATE_DIR/keyfile" --wiredTigerCacheSizeGB 0.25 \
+      --setParameter ttlMonitorEnabled=false \
+      --fork --logpath "$STATE_DIR/mongod.log" >/dev/null
   fi
   if [ "$FRESH" -eq 1 ]; then
-    # Copy the scripts where the postgres OS user can read them.
-    cp "$HERE/db/roles.sql" "$HERE/db/init-roles.sh" "$STATE_DIR/"
-    chmod 644 "$STATE_DIR/roles.sql" "$STATE_DIR/init-roles.sh"
-    (cd "$STATE_DIR" && as_pg env PGHOST="$STATE_DIR" PGPORT="$PG_PORT" \
-      ROLES_SQL_FILE="$STATE_DIR/roles.sql" bash "$STATE_DIR/init-roles.sh" >/dev/null)
+    # Localhost exception: initiate the replica set and create the (test) root user.
+    py - "$MONGO_PORT" <<'EOF'
+import sys, time
+from pymongo import MongoClient
+port = sys.argv[1]
+c = MongoClient(f"mongodb://127.0.0.1:{port}/?directConnection=true")
+c.admin.command("replSetInitiate", {"_id": "rs0", "members": [{"_id": 0, "host": f"127.0.0.1:{port}"}]})
+for _ in range(100):
+    if c.admin.command("hello").get("isWritablePrimary"):
+        break
+    time.sleep(0.1)
+c.admin.command("createUser", "root", pwd="root_test", roles=["root"])
+EOF
+    NZT_MONGODB_ROOT_URI="$ROOT_URI" NZT_DB_NAME=nzt_test \
+      NZT_MIGRATOR_PASSWORD=nzt_migrator_test NZT_APP_PASSWORD=nzt_app_test \
+      py "$HERE/db/create_roles.py" >/dev/null
   fi
   if ! redis-cli -p "$REDIS_PORT" ping >/dev/null 2>&1; then
     redis-server --port "$REDIS_PORT" --bind 127.0.0.1 --save "" --appendonly no \
@@ -60,8 +65,8 @@ start() {
 }
 
 stop() {
-  if [ -d "$PG_DATA" ]; then
-    as_pg "$PG_BIN/pg_ctl" -D "$PG_DATA" -m fast stop >/dev/null 2>&1 || true
+  if [ -d "$MONGO_DATA" ]; then
+    "$MONGOD" --dbpath "$MONGO_DATA" --shutdown >/dev/null 2>&1 || true
   fi
   redis-cli -p "$REDIS_PORT" shutdown nosave >/dev/null 2>&1 || true
   rm -rf "$STATE_DIR"
@@ -69,7 +74,7 @@ stop() {
 }
 
 status() {
-  as_pg "$PG_BIN/pg_isready" -h 127.0.0.1 -p "$PG_PORT" || true
+  echo "mongodb: $(py -c "import pymongo; print(pymongo.MongoClient('$ROOT_URI', serverSelectionTimeoutMS=1000).admin.command('ping')['ok'])" 2>/dev/null || echo down)"
   echo "redis: $(redis-cli -p "$REDIS_PORT" ping 2>/dev/null || echo down)"
 }
 

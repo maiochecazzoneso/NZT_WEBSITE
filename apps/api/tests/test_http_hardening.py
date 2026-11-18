@@ -129,7 +129,6 @@ async def test_docs_disabled_in_production(monkeypatch: pytest.MonkeyPatch):
     )
     settings = make_settings(
         environment="production",
-        database_sslmode="verify-full",
         trusted_proxy_cidrs=["10.0.0.0/8"],
         access_token_private_key_pem=pem,
         oauth_state_key="A" * 43,

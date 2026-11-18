@@ -3,19 +3,24 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Cookie, Depends, Request
 from fastapi.responses import JSONResponse, Response
-from sqlalchemy import func, select, update
-from sqlalchemy.exc import IntegrityError
+from pymongo.errors import DuplicateKeyError
 from starlette.background import BackgroundTask
 
 from app.cookies import REFRESH_COOKIE, clear_refresh_cookie, set_refresh_cookie
-from app.deps import DbSession, DPoPProofDep, ServicesDep, dpop_unauthorized
+from app.db import (
+    EMAIL_COLLATION,
+    PROVIDER_LOCAL,
+    ROLE_ADMIN,
+    identity_document,
+    user_document,
+    utcnow,
+)
+from app.deps import DPoPProofDep, Services, ServicesDep, dpop_unauthorized
 from app.errors import www_authenticate_dpop
-from app.models import AuthIdentity, User
 from app.ratelimit import LOGIN_PER_EMAIL, LOGIN_PER_IP, REFRESH_PER_FAMILY, REGISTER_PER_IP
 from app.schemas import ErrorResponse, LoginRequest, RegisterRequest, TokenResponse
 from app.security.passwords import PasswordHasherBusyError
@@ -24,7 +29,7 @@ from app.services.email_verification import (
     issue_verification_token,
     verification_email,
 )
-from app.services.sessions import IssuedSession, RefreshError, RefreshOutcome
+from app.services.sessions import IssuedSession, RefreshError, RefreshOutcome, TokenRef
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +68,56 @@ def error_response(
     return response
 
 
+async def password_login(
+    services: Services, payload: LoginRequest, *, jkt: str, admin: bool = False
+) -> IssuedSession | None:
+    """Shared by the customer and the admin login. None = invalid credentials (one
+    generic answer, same Argon2id work for unknown users, spec §4.2)."""
+    allowed = {"isActive": True, "role": ROLE_ADMIN} if admin else {"isActive": True}
+    user = await services.db.users.find_one(
+        {"email": payload.email},
+        {"passwordHash": 1, "isActive": 1, "role": 1},
+        collation=EMAIL_COLLATION,
+    )
+    if (
+        user is None
+        or user["passwordHash"] is None
+        or any(user[k] != v for k, v in allowed.items())
+    ):
+        await services.passwords.dummy_verify(payload.password)
+        return None
+    password_hash: str = user["passwordHash"]
+    if not await services.passwords.verify(password_hash, payload.password):
+        return None
+    if services.passwords.hasher.check_needs_rehash(password_hash):
+        try:
+            new_hash = await services.passwords.hash(payload.password)
+        except PasswordHasherBusyError:
+            new_hash = None  # best effort: rehash again on a later login
+        if new_hash is not None:
+            # Compare-and-swap: never resurrect a password removed meanwhile (takeover).
+            swapped = await services.db.users.update_one(
+                {"_id": user["_id"], "passwordHash": password_hash},
+                {"$set": {"passwordHash": new_hash, "updatedAt": utcnow()}},
+            )
+            if swapped.modified_count:
+                password_hash = new_hash
+    issued = await services.sessions.create_session(user_id=user["_id"], jkt=jkt)
+    # Re-check AFTER the session exists that the verified hash is still current. A Google
+    # takeover (routers/google.py) first removes the password, THEN revokes every family:
+    # either this read sees the password gone (the new family is revoked here), or it ran
+    # before the removal, so the family already existed and the takeover revokes it.
+    if (
+        await services.db.users.find_one(
+            {"_id": user["_id"], "passwordHash": password_hash, **allowed}, {"_id": 1}
+        )
+        is None
+    ):
+        await services.sessions.revoke_family(issued.family_id, reason="credentials_changed")
+        return None
+    return issued
+
+
 # --- rate-limit dependencies (resolved BEFORE body validation / DPoP) ------------------
 async def _rl_register(request: Request, services: ServicesDep) -> None:
     await services.rate_limiter.hit(REGISTER_PER_IP, services.client_ip.for_request(request))
@@ -72,14 +127,20 @@ async def _rl_login_ip(request: Request, services: ServicesDep) -> None:
     await services.rate_limiter.hit(LOGIN_PER_IP, services.client_ip.for_request(request))
 
 
-async def _rl_refresh(
-    request: Request, services: ServicesDep, db: DbSession, refresh: RefreshCookie = None
-) -> None:
-    family_id = await services.sessions.family_id_for(db, refresh)
-    await db.rollback()
+async def presented_refresh_token(
+    services: ServicesDep, refresh: RefreshCookie = None
+) -> TokenRef | None:
+    """Looked up once per request: FastAPI caches it for the rate limit AND the handler."""
+    return await services.sessions.lookup(refresh)
+
+
+RefreshTokenRef = Annotated[TokenRef | None, Depends(presented_refresh_token)]
+
+
+async def _rl_refresh(request: Request, services: ServicesDep, ref: RefreshTokenRef) -> None:
     identifier = (
-        f"family:{family_id}"
-        if family_id is not None
+        f"family:{ref.family_id}"
+        if ref is not None
         else f"anon:{services.client_ip.for_request(request)}"
     )
     await services.rate_limiter.hit(REFRESH_PER_FAMILY, identifier)
@@ -98,31 +159,29 @@ async def _rl_refresh(
 )
 async def register(
     services: ServicesDep,
-    db: DbSession,
     proof: DPoPProofDep,
     payload: Annotated[RegisterRequest, Body()],
 ) -> JSONResponse:
     password_hash = await services.passwords.hash(payload.password)
-    user = User(id=uuid.uuid4(), email=payload.email, password_hash=password_hash)
+    now = utcnow()
+    user = user_document(
+        email=payload.email,
+        password_hash=password_hash,
+        is_verified=False,
+        identities=[identity_document(PROVIDER_LOCAL, payload.email, now)],
+        now=now,
+    )
     try:
-        db.add(user)
-        await db.flush()
-        db.add(
-            AuthIdentity(
-                id=uuid.uuid4(), user_id=user.id, provider="local", provider_user_id=payload.email
-            )
-        )
-        await db.flush()
-    except IntegrityError:
-        await db.rollback()
+        await services.db.users.insert_one(user)
+    except DuplicateKeyError:
         # D-A12: generic failure, no "email already exists" message.
         return error_response(400, REGISTRATION_FAILED)
-    # Email verification (AGGIUNTA): the token row commits atomically with the account.
+    # Email verification (AGGIUNTA). The account is written first: if a later write
+    # fails the account simply has no token/session yet (resend / login recover it).
     raw_token = await issue_verification_token(
-        db, user.id, ttl_seconds=services.settings.email_verification_ttl_seconds
+        services.db, user["_id"], ttl_seconds=services.settings.email_verification_ttl_seconds
     )
-    issued = await services.sessions.create_session(db, user_id=user.id, jkt=proof.jkt)
-    await db.commit()
+    issued = await services.sessions.create_session(user_id=user["_id"], jkt=proof.jkt)
     response = token_response(
         issued, status_code=201, refresh_ttl=services.settings.refresh_token_ttl_seconds
     )
@@ -144,47 +203,13 @@ async def register(
 )
 async def login(
     services: ServicesDep,
-    db: DbSession,
     proof: DPoPProofDep,
     payload: Annotated[LoginRequest, Body()],
 ) -> JSONResponse:
     await services.rate_limiter.hit(LOGIN_PER_EMAIL, payload.email)
-    result = await db.execute(
-        select(User.id, User.password_hash, User.is_active).where(
-            func.lower(User.email) == payload.email
-        )
-    )
-    row = result.one_or_none()
-    if row is None or row.password_hash is None or not row.is_active:
-        # Spec §4.2: identical Argon2id work when the user cannot log in with a password.
-        await services.passwords.dummy_verify(payload.password)
+    issued = await password_login(services, payload, jkt=proof.jkt)
+    if issued is None:
         return error_response(401, INVALID_CREDENTIALS)
-    if not await services.passwords.verify(row.password_hash, payload.password):
-        return error_response(401, INVALID_CREDENTIALS)
-    # Re-check under a row lock that the verified hash is still the current one: a Google
-    # takeover (routers/google.py) that removed this password concurrently either commits
-    # first (=> 401 here) or waits for this session to commit and then revokes it.
-    still_valid = await db.execute(
-        select(User.id)
-        .where(
-            User.id == row.id,
-            User.password_hash == row.password_hash,
-            User.is_active.is_(True),
-        )
-        .with_for_update()
-    )
-    if still_valid.scalar_one_or_none() is None:
-        await db.rollback()
-        return error_response(401, INVALID_CREDENTIALS)
-    if services.passwords.hasher.check_needs_rehash(row.password_hash):
-        try:
-            new_hash = await services.passwords.hash(payload.password)
-        except PasswordHasherBusyError:
-            new_hash = None  # best effort: rehash again on a later login
-        if new_hash is not None:
-            await db.execute(update(User).where(User.id == row.id).values(password_hash=new_hash))
-    issued = await services.sessions.create_session(db, user_id=row.id, jkt=proof.jkt)
-    await db.commit()
     return token_response(
         issued, status_code=200, refresh_ttl=services.settings.refresh_token_ttl_seconds
     )
@@ -198,14 +223,14 @@ async def login(
 )
 async def refresh(
     services: ServicesDep,
-    db: DbSession,
     proof: DPoPProofDep,
+    ref: RefreshTokenRef,
     refresh_token: RefreshCookie = None,
 ) -> JSONResponse:
     if not refresh_token:
         return error_response(401, "Missing refresh token")
     try:
-        issued = await services.sessions.rotate(db, raw=refresh_token, jkt=proof.jkt)
+        issued = await services.sessions.rotate(ref, jkt=proof.jkt)
     except RefreshError as exc:
         if exc.outcome is RefreshOutcome.REUSE:
             logger.warning("SECURITY: refresh token reuse detected; all sessions revoked")
@@ -230,13 +255,13 @@ async def refresh(
 )
 async def logout(
     services: ServicesDep,
-    db: DbSession,
     proof: DPoPProofDep,
+    ref: RefreshTokenRef,
     refresh_token: RefreshCookie = None,
 ) -> Response:
     if not refresh_token:
         return error_response(401, "Missing refresh token")
-    if not await services.sessions.logout(db, raw=refresh_token, jkt=proof.jkt):
+    if not await services.sessions.logout(ref, jkt=proof.jkt):
         raise dpop_unauthorized("DPoP key does not match refresh token binding")
     response = Response(status_code=204)
     clear_refresh_cookie(response)

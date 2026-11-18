@@ -1,25 +1,27 @@
 """Shared FastAPI dependencies: service container, DPoP proof extraction, DPoP-bound
-access-token authentication, entitlements (spec §7, phase 5)."""
+access-token authentication, admin role, entitlements (spec §7, phase 5).
+
+The authenticated user's document (active flag, role, verification state, entitlements)
+is read from MongoDB ONCE per request, inside the authentication itself: a disabled user,
+a demoted admin or a revoked entitlement takes effect on the very next request, and the
+admin / entitlement / ``/me`` checks need no further query."""
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Annotated
+from datetime import datetime
+from typing import Annotated, Any
 
 import httpx
 from fastapi import Depends, Header, HTTPException, Request
 from redis.asyncio import Redis
-from sqlalchemy import or_, select
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
-from sqlalchemy.sql import func
 
 from app.client_ip import ClientIPResolver
 from app.config import Settings
-from app.db import get_session
+from app.db import ROLE_ADMIN, Client, Collections, utcnow
 from app.errors import www_authenticate_dpop
-from app.models import Entitlement, User
 from app.ratelimit import RateLimiter
 from app.security.dpop import DPoPError, DPoPProof, DPoPValidator
 from app.security.passwords import PasswordService
@@ -34,8 +36,8 @@ from app.services.storage import Presigner
 @dataclass(slots=True)
 class Services:
     settings: Settings
-    engine: AsyncEngine
-    sessionmaker: async_sessionmaker[AsyncSession]
+    mongo: Client
+    db: Collections
     redis: Redis
     http: httpx.AsyncClient
     passwords: PasswordService
@@ -56,7 +58,6 @@ def get_services(request: Request) -> Services:
 
 
 ServicesDep = Annotated[Services, Depends(get_services)]
-DbSession = Annotated[AsyncSession, Depends(get_session)]
 DPoPHeader = Annotated[
     str | None,
     Header(alias="DPoP", description="DPoP proof JWT (RFC 9449), ES256 / P-256 key"),
@@ -85,16 +86,37 @@ DPoPProofDep = Annotated[DPoPProof, Depends(require_dpop_proof)]
 
 
 @dataclass(frozen=True, slots=True)
+class Entitlement:
+    product_code: str
+    is_enabled: bool
+    valid_until: datetime | None
+
+    def is_active(self, now: datetime) -> bool:
+        return self.is_enabled and (self.valid_until is None or self.valid_until > now)
+
+
+@dataclass(frozen=True, slots=True)
 class AuthenticatedUser:
     id: uuid.UUID
     email: str
     jkt: str
+    role: str
+    is_verified: bool
+    entitlements: tuple[Entitlement, ...] = ()
+
+
+_USER_PROJECTION = {"email": 1, "role": 1, "isVerified": 1, "entitlements": 1}
+
+
+def _entitlements(raw: Any) -> tuple[Entitlement, ...]:
+    return tuple(
+        Entitlement(e["productCode"], e["isEnabled"], e.get("validUntil")) for e in raw or ()
+    )
 
 
 async def get_current_user(
     request: Request,
     services: ServicesDep,
-    db: DbSession,
     dpop: DPoPHeader = None,
     authorization: Annotated[str | None, Header(description="DPoP <access_token>")] = None,
 ) -> AuthenticatedUser:
@@ -126,38 +148,37 @@ async def get_current_user(
         user_id=claims.sub, jkt=claims.jkt, iat=claims.iat, iat_ms=claims.iat_ms
     ):
         raise dpop_unauthorized("token revoked", error="invalid_token")
-    result = await db.execute(
-        select(User.id, User.email).where(User.id == claims.sub, User.is_active.is_(True))
-    )
-    row = result.one_or_none()
-    if row is None:
+    doc = await services.db.users.find_one({"_id": claims.sub, "isActive": True}, _USER_PROJECTION)
+    if doc is None:
         raise dpop_unauthorized("unknown or inactive user", error="invalid_token")
-    return AuthenticatedUser(id=row.id, email=row.email, jkt=claims.jkt)
+    return AuthenticatedUser(
+        id=doc["_id"],
+        email=doc["email"],
+        jkt=claims.jkt,
+        role=doc["role"],
+        is_verified=doc["isVerified"],
+        entitlements=_entitlements(doc.get("entitlements")),
+    )
 
 
 CurrentUser = Annotated[AuthenticatedUser, Depends(get_current_user)]
 
 
-async def has_active_entitlement(db: AsyncSession, user_id: uuid.UUID, product_code: str) -> bool:
-    result = await db.execute(
-        select(Entitlement.id).where(
-            Entitlement.user_id == user_id,
-            Entitlement.product_code == product_code,
-            Entitlement.is_enabled.is_(True),
-            or_(Entitlement.valid_until.is_(None), Entitlement.valid_until > func.now()),
-        )
-    )
-    return result.scalar_one_or_none() is not None
+def has_active_entitlement(
+    user: AuthenticatedUser, product_code: str, now: datetime | None = None
+) -> bool:
+    now = now or utcnow()
+    return any(e.product_code == product_code and e.is_active(now) for e in user.entitlements)
 
 
 def require_entitlement(
     product_code: str,
-) -> Callable[[AuthenticatedUser, AsyncSession], Awaitable[AuthenticatedUser]]:
+) -> Callable[[AuthenticatedUser], Awaitable[AuthenticatedUser]]:
     """Dependency factory (spec §10 phase 5): 403 unless an enabled, non-expired
     entitlement for ``product_code`` exists."""
 
-    async def dependency(user: CurrentUser, db: DbSession) -> AuthenticatedUser:
-        if not await has_active_entitlement(db, user.id, product_code):
+    async def dependency(user: CurrentUser) -> AuthenticatedUser:
+        if not has_active_entitlement(user, product_code):
             raise HTTPException(
                 status_code=403,
                 detail=f"User does not have active entitlement for {product_code}",
@@ -167,11 +188,10 @@ def require_entitlement(
     return dependency
 
 
-async def get_current_admin(user: CurrentUser, db: DbSession) -> AuthenticatedUser:
-    """Admin-only resources: valid DPoP-bound token AND users.role == 'admin' read from the
+async def get_current_admin(user: CurrentUser) -> AuthenticatedUser:
+    """Admin-only resources: valid DPoP-bound token AND role == 'admin' read from the
     database on every request (a demoted/disabled admin loses access immediately)."""
-    role = await db.scalar(select(User.role).where(User.id == user.id, User.is_active.is_(True)))
-    if role != "admin":
+    if user.role != ROLE_ADMIN:
         raise HTTPException(status_code=403, detail="Administrator access required")
     return user
 

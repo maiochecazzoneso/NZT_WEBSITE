@@ -16,13 +16,16 @@ import os
 import sys
 import uuid
 
-from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.config import Settings
-from app.db import create_engine, create_sessionmaker
-from app.models import Entitlement, User
+from app.db import (
+    EMAIL_COLLATION,
+    PROVIDER_LOCAL,
+    ROLE_CUSTOMER,
+    Collections,
+    create_client,
+    identity_document,
+    utcnow,
+)
 from app.security.passwords import PasswordService
 from app.services.storage import Product
 
@@ -34,21 +37,34 @@ USERS = (
 
 
 async def upsert_user(
-    session: AsyncSession, passwords: PasswordService, email: str, password: str, role: str
-) -> uuid.UUID:
-    password_hash = await passwords.hash(password)
-    user = (
-        await session.execute(select(User).where(func.lower(User.email) == email))
-    ).scalar_one_or_none()
-    if user is None:
-        user = User(id=uuid.uuid4(), email=email)
-        session.add(user)
-    user.password_hash = password_hash
-    user.is_active = True
-    user.is_verified = True
-    user.role = role
-    await session.flush()
-    return user.id
+    db: Collections, passwords: PasswordService, email: str, password: str, role: str
+) -> None:
+    now = utcnow()
+    entitlements = (
+        [
+            {"productCode": p.value, "isEnabled": True, "validUntil": None, "createdAt": now}
+            for p in Product
+        ]
+        if role == ROLE_CUSTOMER
+        else []
+    )
+    await db.users.update_one(
+        {"email": email},
+        {
+            "$set": {
+                "passwordHash": await passwords.hash(password),
+                "isActive": True,
+                "isVerified": True,
+                "role": role,
+                "identities": [identity_document(PROVIDER_LOCAL, email, now)],
+                "entitlements": entitlements,
+                "updatedAt": now,
+            },
+            "$setOnInsert": {"_id": uuid.uuid4(), "email": email, "createdAt": now},
+        },
+        upsert=True,
+        collation=EMAIL_COLLATION,
+    )
 
 
 async def main() -> int:
@@ -59,30 +75,13 @@ async def main() -> int:
         return 1
 
     passwords = PasswordService(max_concurrency=1)
-    engine = create_engine(settings)
+    client = create_client(settings)
     try:
-        async with create_sessionmaker(engine)() as session, session.begin():
-            for email, password, role in USERS:
-                user_id = await upsert_user(session, passwords, email, password, role)
-                if role != "customer":
-                    continue
-                for product in Product:
-                    await session.execute(
-                        insert(Entitlement)
-                        .values(
-                            id=uuid.uuid4(),
-                            user_id=user_id,
-                            product_code=product.value,
-                            is_enabled=True,
-                            valid_until=None,
-                        )
-                        .on_conflict_do_update(
-                            index_elements=["user_id", "product_code"],
-                            set_={"is_enabled": True, "valid_until": None},
-                        )
-                    )
+        db = Collections.of(client[settings.mongodb_database])
+        for email, password, role in USERS:
+            await upsert_user(db, passwords, email, password, role)
     finally:
-        await engine.dispose()
+        await client.close()
     for email, _password, role in USERS:
         print(f"seed_dev_users: {role:8} {email}")
     return 0

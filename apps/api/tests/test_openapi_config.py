@@ -102,7 +102,8 @@ def test_defaults_use_it_domains():
     assert s.portal_origins == ["https://clienti.nztsolutions.it"]
     assert s.storage_public_origin == "https://storage.nztsolutions.it"
     assert s.access_token_ttl_seconds == 600
-    assert s.effective_db_sslmode == "disable"
+    assert s.effective_mongodb_tls is False
+    assert s.mongodb_database == "nzt_test"
 
 
 def test_env_parsing(monkeypatch: pytest.MonkeyPatch):
@@ -118,7 +119,7 @@ def test_production_requires_secrets():
         Settings(_env_file=None, environment="production")  # type: ignore[call-arg]
 
 
-def test_production_defaults_verify_full_and_rejects_disable():
+def test_production_defaults_mongodb_tls_and_rejects_disable():
     key = base64.urlsafe_b64encode(b"k" * 32).decode().rstrip("=")
     common: dict[str, Any] = {
         "environment": "production",
@@ -130,10 +131,10 @@ def test_production_defaults_verify_full_and_rejects_disable():
         "resend_api_key": "re_test_key",
         "mail_from": "NZT Solutions <noreply@nztsolutions.it>",
     }
-    ok = make_settings(**common, database_sslmode=None)
-    assert ok.effective_db_sslmode == "verify-full"
-    with pytest.raises(ValidationError, match="verify-full"):
-        make_settings(**common, database_sslmode="disable")
+    ok = make_settings(**common, mongodb_tls=None)
+    assert ok.effective_mongodb_tls is True
+    with pytest.raises(ValidationError, match="NZT_MONGODB_TLS=true"):
+        make_settings(**common, mongodb_tls=False)
     with pytest.raises(ValidationError, match="LAUNCHER_SHA256"):
         make_settings(**{**common, "launcher_sha256": "0" * 64})
 

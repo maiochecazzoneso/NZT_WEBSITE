@@ -53,7 +53,7 @@ su Cloudflare, Railway, DNS e GitHub sono elencate nella checklist del documento
 
 Il repo è un workspace pnpm: la Home è nella radice, l'Area Clienti è in `apps/portal` (frontend clienti), `apps/admin` (dashboard amministratore, login separato), `apps/api` (backend FastAPI) e `packages/ui` (design system condiviso). Il pulsante "Area Clienti" della Home porta a `/accedi` del portale (URL configurabile con `PUBLIC_CLIENT_AREA_URL` in build).
 
-Un solo comando builda e avvia tutto (PostgreSQL, Redis, API con migrazioni all'avvio, portale, Home):
+Un solo comando builda e avvia tutto (MongoDB, Redis, API con schema MongoDB all'avvio, portale, Home):
 
 ```bash
 docker compose up --build
@@ -65,5 +65,7 @@ docker compose up --build
   - **Admin**: `admin@example.com` / `admin` → dashboard amministratore http://localhost:8081
   - **Cliente**: `cliente@example.com` / `cliente` → Area Clienti normale http://localhost:8080/accedi
 - Reset dei dati: `docker compose down -v`. Credenziali solo di prova.
+- Database: **MongoDB** (in produzione un cluster esterno condiviso tra i servizi, un database per servizio). Schema (validatori + indici): `cd apps/api && uv run python -m app.schema`; utenti a privilegio minimo: `apps/api/scripts/db/create_roles.py`. Migrazione una tantum dei dati da PostgreSQL: `apps/api/scripts/migrate_postgres_to_mongo.py` (vedi `docs/architettura_sicurezza_area_clienti.md` §24.2).
+- Test dell'API: `cd apps/api && scripts/test-services.sh start && uv run pytest` (MongoDB 8 e Redis 7 reali; `MONGOD=/percorso/mongod` se `mongod` non è nel PATH).
 - Il vecchio compose di sviluppo della Home è `docker-compose.dev.yml`.
 - Script utili: `pnpm dev:portal`, `pnpm build:portal`, `pnpm test:portal`.

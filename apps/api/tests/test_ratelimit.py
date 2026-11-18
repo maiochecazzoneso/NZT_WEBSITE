@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 
-import asyncpg
 import httpx
 import pytest
 from fastapi import FastAPI
 from redis.asyncio import Redis
 
 from app.client_ip import ClientIPResolver
+from app.db import Collections
 from app.main import create_app
 from app.ratelimit import (
     DOWNLOADS_PER_USER,
@@ -29,6 +29,8 @@ from tests.conftest import (
     grant,
     login,
     make_settings,
+    one,
+    only_user_id,
     refresh,
     refresh_cookie_of,
     register,
@@ -103,14 +105,14 @@ async def test_refresh_per_family(client_factory: ClientFactory):
     assert (await refresh(c, other_key, cookie=other)).status_code == 200
 
 
-async def test_downloads_per_user(client: httpx.AsyncClient, migrator_conn: asyncpg.Connection):
+async def test_downloads_per_user(client: httpx.AsyncClient, mongo: Collections):
     key = DPoPKey()
     token = (await register(client, key)).json()["access_token"]
-    await grant(migrator_conn, await migrator_conn.fetchval("SELECT id FROM users"))
+    await grant(mongo, await only_user_id(mongo))
     for _ in range(10):
         assert (await download(client, key, token)).status_code == 200
     _assert_429(await download(client, key, token), 7200)
-    assert await migrator_conn.fetchval("SELECT count(*) FROM download_logs") == 10
+    assert await mongo.download_logs.count_documents({}) == 10
 
 
 async def test_sliding_window_recovers():
@@ -180,9 +182,7 @@ async def test_spoofed_xff_cannot_evade_login_limit(client_factory: ClientFactor
     assert r.status_code == 429
 
 
-async def test_trusted_proxy_xff_used_for_limits_and_audit(
-    fake_google: object, migrator_conn: asyncpg.Connection
-):
+async def test_trusted_proxy_xff_used_for_limits_and_audit(fake_google: object, mongo: Collections):
     settings = make_settings(trusted_proxy_cidrs=["10.0.0.0/8"])
     app: FastAPI = create_app(settings)
     async with app.router.lifespan_context(app):
@@ -198,7 +198,7 @@ async def test_trusted_proxy_xff_used_for_limits_and_audit(
                 },
             )
             token = reg.json()["access_token"]
-            await grant(migrator_conn, await migrator_conn.fetchval("SELECT id FROM users"))
+            await grant(mongo, await only_user_id(mongo))
             path = "/api/v1/downloads/launcher"
             resp = await c.get(
                 path,
@@ -209,5 +209,4 @@ async def test_trusted_proxy_xff_used_for_limits_and_audit(
                 },
             )
             assert resp.status_code == 200
-    ip = await migrator_conn.fetchval("SELECT ip_address FROM download_logs")
-    assert str(ip) == "198.51.100.201"
+    assert (await one(mongo.download_logs))["ipAddress"] == "198.51.100.201"

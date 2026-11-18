@@ -1,34 +1,40 @@
-# Throwaway PostgreSQL 16 + Redis 7 for the test-suite (TEST ONLY credentials).
-#   docker compose -f docker-compose.test.yml up -d
+# Throwaway MongoDB 8 + Redis 7 for the test-suite (TEST ONLY credentials).
+#   docker compose -f docker-compose.test.yml up -d --wait
 #   uv run pytest
 #   docker compose -f docker-compose.test.yml down -v
-# Same endpoints as scripts/test-services.sh: Postgres 127.0.0.1:55432, Redis 127.0.0.1:56379.
+# Same endpoints as scripts/test-services.sh: MongoDB 127.0.0.1:57017 (db nzt_test, users
+# nzt_migrator / nzt_app created by mongo-init), Redis 127.0.0.1:56379.
 name: nzt-api-test
 
 services:
-  postgres:
-    image: postgres:16-alpine
+  mongo:
+    image: mongo:8.0
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres_test
-      POSTGRES_DB: postgres
-      ROLES_SQL_FILE: /nzt-sql/roles.sql
-      NZT_DB_NAME: nzt_test
-      NZT_MIGRATOR_PASSWORD: nzt_migrator_test
-      NZT_APP_PASSWORD: nzt_app_test
-    command: ["postgres", "-c", "fsync=off"]
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root_test
+    # TTL monitor off: documents expired on purpose by a test must not vanish mid-test.
+    command: ["mongod", "--setParameter", "ttlMonitorEnabled=false", "--wiredTigerCacheSizeGB", "0.25"]
     ports:
-      - "127.0.0.1:55432:5432"
-    volumes:
-      - ./scripts/db/roles.sql:/nzt-sql/roles.sql:ro
-      - ./scripts/db/init-roles.sh:/docker-entrypoint-initdb.d/10-init-roles.sh:ro
+      - "127.0.0.1:57017:27017"
     tmpfs:
-      - /var/lib/postgresql/data
+      - /data/db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d nzt_test"]
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       interval: 2s
       timeout: 3s
       retries: 30
+
+  # Least-privilege users (scripts/db/create_roles.py), then exits.
+  mongo-init:
+    build: .
+    command: ["python", "scripts/db/create_roles.py"]
+    environment:
+      NZT_MONGODB_ROOT_URI: mongodb://root:root_test@mongo:27017/?authSource=admin
+      NZT_DB_NAME: nzt_test
+      NZT_MIGRATOR_PASSWORD: nzt_migrator_test
+      NZT_APP_PASSWORD: nzt_app_test
+    depends_on:
+      mongo: { condition: service_healthy }
 
   redis:
     image: redis:7-alpine

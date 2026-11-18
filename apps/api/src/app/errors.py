@@ -8,6 +8,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pymongo.errors import ConnectionFailure, ExecutionTimeout, WTimeoutError
 from redis.exceptions import RedisError
 
 from app.ratelimit import RateLimitExceededError, RateLimitUnavailableError
@@ -72,4 +73,8 @@ def install_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RateLimitExceededError, _rate_limited_handler)
     app.add_exception_handler(RateLimitUnavailableError, _unavailable_handler)
     app.add_exception_handler(RedisError, _unavailable_handler)
+    # MongoDB unreachable / no primary / client-side timeout => 503 + Retry-After (fail
+    # closed, no stack trace). Other database errors stay generic 500s.
+    for mongo_error in (ConnectionFailure, ExecutionTimeout, WTimeoutError):
+        app.add_exception_handler(mongo_error, _unavailable_handler)
     app.add_exception_handler(PasswordHasherBusyError, _hasher_busy_handler)

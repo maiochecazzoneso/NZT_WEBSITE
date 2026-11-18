@@ -2,14 +2,19 @@
 takeover rule in routers/google.py).
 
 * token = ``secrets.token_urlsafe(32)`` (256 bit), only ``sha256(token)`` hex is stored;
-* single use (``used_at``), TTL ``NZT_EMAIL_VERIFICATION_TTL_SECONDS`` (default 24 h);
+* single use (``usedAt``), TTL ``NZT_EMAIL_VERIFICATION_TTL_SECONDS`` (default 24 h);
 * issuing a new token deletes the user's previous PENDING tokens; consuming one deletes
   the other pending tokens; the Google takeover deletes them all;
 * the link carries the token in the URL FRAGMENT (``/verifica-email#token=...``), so it
-  never reaches server access logs or a ``Referer`` header.
+  never reaches server access logs or a ``Referer`` header;
+* documents: ``emailVerificationTokens`` with ``_id = sha256(token)``; a TTL index
+  removes them once expired.
 
-Lock order everywhere: ``users`` row first, then ``email_verification_tokens`` (same order
-as the Google takeover), so verify/takeover cannot deadlock."""
+Concurrency without transactions: consumption is ONE atomic findOneAndUpdate on the token
+(``usedAt: null`` and not expired), so a token is accepted at most once. A concurrent
+Google takeover (routers/google.py) is safe in either order: it only proceeds on a user
+still ``isVerified: false`` (atomic condition on the user document) and it deletes the
+pending tokens itself."""
 
 from __future__ import annotations
 
@@ -18,13 +23,10 @@ import logging
 import re
 import secrets
 import uuid
-from datetime import UTC, datetime, timedelta
-
-from sqlalchemy import delete, func, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import timedelta
 
 from app.config import Settings
-from app.models import EmailVerificationToken, User
+from app.db import Collections, utcnow
 from app.services.mailer import Mailer, OutgoingEmail
 
 logger = logging.getLogger(__name__)
@@ -46,70 +48,46 @@ def is_well_formed_token(raw: str) -> bool:
     return _TOKEN_RE.fullmatch(raw) is not None
 
 
-async def invalidate_pending_tokens(db: AsyncSession, user_id: uuid.UUID) -> None:
-    await db.execute(
-        delete(EmailVerificationToken)
-        .where(
-            EmailVerificationToken.user_id == user_id,
-            EmailVerificationToken.used_at.is_(None),
-        )
-        .execution_options(synchronize_session=False)
-    )
+async def invalidate_pending_tokens(db: Collections, user_id: uuid.UUID) -> None:
+    await db.email_tokens.delete_many({"userId": user_id, "usedAt": None})
 
 
-async def issue_verification_token(
-    db: AsyncSession, user_id: uuid.UUID, *, ttl_seconds: int
-) -> str:
-    """New pending token (previous pending ones are invalidated). Caller commits."""
+async def issue_verification_token(db: Collections, user_id: uuid.UUID, *, ttl_seconds: int) -> str:
+    """New pending token (previous pending ones are invalidated)."""
     await invalidate_pending_tokens(db, user_id)
     raw = new_verification_token()
-    db.add(
-        EmailVerificationToken(
-            id=uuid.uuid4(),
-            user_id=user_id,
-            token_hash=hash_verification_token(raw),
-            expires_at=datetime.now(UTC) + timedelta(seconds=ttl_seconds),
-        )
+    now = utcnow()
+    await db.email_tokens.insert_one(
+        {
+            "_id": hash_verification_token(raw),
+            "userId": user_id,
+            "expiresAt": now + timedelta(seconds=ttl_seconds),
+            "usedAt": None,
+            "createdAt": now,
+        }
     )
-    await db.flush()
     return raw
 
 
-async def consume_verification_token(db: AsyncSession, raw: str) -> uuid.UUID | None:
+async def consume_verification_token(db: Collections, raw: str) -> uuid.UUID | None:
     """Mark the token used and the user verified. None for unknown / malformed / used /
-    expired tokens (the caller answers with ONE generic error). Caller commits."""
+    expired tokens (the caller answers with ONE generic error)."""
     if not is_well_formed_token(raw):
         return None
-    token_hash = hash_verification_token(raw)
-    owner = await db.execute(
-        select(EmailVerificationToken.user_id).where(
-            EmailVerificationToken.token_hash == token_hash
-        )
+    now = utcnow()
+    token = await db.email_tokens.find_one_and_update(
+        {"_id": hash_verification_token(raw), "usedAt": None, "expiresAt": {"$gt": now}},
+        {"$set": {"usedAt": now}},
+        projection={"userId": 1},
     )
-    user_id = owner.scalar_one_or_none()
-    if user_id is None:
+    if token is None:
         return None
-    # users row first (see module docstring), then the conditional single-use UPDATE.
-    await db.execute(select(User.id).where(User.id == user_id).with_for_update())
-    consumed = await db.execute(
-        update(EmailVerificationToken)
-        .where(
-            EmailVerificationToken.token_hash == token_hash,
-            EmailVerificationToken.used_at.is_(None),
-            EmailVerificationToken.expires_at > func.now(),
-        )
-        .values(used_at=func.now())
-        .returning(EmailVerificationToken.user_id)
-        .execution_options(synchronize_session=False)
+    user_id: uuid.UUID = token["userId"]
+    verified = await db.users.update_one(
+        {"_id": user_id}, {"$set": {"isVerified": True, "updatedAt": now}}
     )
-    if consumed.scalar_one_or_none() is None:
+    if verified.matched_count == 0:
         return None
-    await db.execute(
-        update(User)
-        .where(User.id == user_id)
-        .values(is_verified=True)
-        .execution_options(synchronize_session=False)
-    )
     await invalidate_pending_tokens(db, user_id)
     return user_id
 

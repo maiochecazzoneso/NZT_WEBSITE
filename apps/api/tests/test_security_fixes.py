@@ -1,7 +1,7 @@
 """Regression tests for the independent security review (M1, L2, L3, L4, L6, I2, I3, I5,
 I6, production configuration). Every test in this module FAILS on the code before the
 fix (commit ed1795c) and passes after it; see the fix spec for the recorded evidence.
-Real PostgreSQL + Redis, no mocks (the only patch is a frozen ``time.time`` in L3)."""
+Real MongoDB + Redis, no mocks (the only patch is a frozen ``time.time`` in L3)."""
 
 from __future__ import annotations
 
@@ -12,11 +12,9 @@ import time
 import uuid
 from typing import Any
 
-import asyncpg
 import httpx
 import jwt
 import pytest
-from alembic import command
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
@@ -25,15 +23,18 @@ from pydantic import ValidationError
 from starlette.requests import Request
 
 from app.client_ip import ClientIPResolver
+from app.db import Collections
 from app.main import create_app
+from app.schema import main as schema_main
+from app.schema import migrations_uri
 from app.security.dpop import DPoPError, DPoPValidator
 from app.security.tokens import AccessTokenError, AccessTokenService
 from tests.conftest import (
     ClientFactory,
-    alembic_config,
     download,
     login,
     make_settings,
+    one,
     refresh,
     refresh_cookie_of,
     register,
@@ -349,13 +350,12 @@ async def test_i3_non_canonical_jwk_coordinates_rejected(app: FastAPI):
 
 # --- I5: Google emails canonicalised exactly like local emails --------------------------
 async def test_i5_idn_google_email_links_to_the_local_account(
-    client: httpx.AsyncClient, fake_google: FakeGoogle, migrator_conn: asyncpg.Connection
+    client: httpx.AsyncClient, fake_google: FakeGoogle, mongo: Collections
 ):
     reg = await register(client, DPoPKey(), email="Victim@XN--EXMPLE-CUA.com")
     assert reg.status_code == 201
-    stored = await migrator_conn.fetchval("SELECT email FROM users")
-    assert stored == "victim@exämple.com"
-    await migrator_conn.execute("UPDATE users SET is_verified = TRUE")
+    assert (await one(mongo.users))["email"] == "victim@exämple.com"
+    await mongo.users.update_many({}, {"$set": {"isVerified": True}})
     auth, params = await _authorize(client)
     fake_google.register_code(
         "code-i5",
@@ -371,15 +371,12 @@ async def test_i5_idn_google_email_links_to_the_local_account(
         client, DPoPKey(), code="code-i5", state=params["state"], state_cookie=_state_cookie(auth)
     )
     assert resp.status_code == 200, resp.text
-    assert await migrator_conn.fetchval("SELECT count(*) FROM users") == 1
-    linked = await migrator_conn.fetchval(
-        "SELECT count(*) FROM auth_identities WHERE provider = 'google'"
-    )
-    assert linked == 1
+    user = await one(mongo.users)
+    assert [i["provider"] for i in user["identities"] if i["provider"] == "google"] == ["google"]
 
 
 async def test_i5_invalid_google_email_rejected(
-    client: httpx.AsyncClient, fake_google: FakeGoogle, migrator_conn: asyncpg.Connection
+    client: httpx.AsyncClient, fake_google: FakeGoogle, mongo: Collections
 ):
     auth, params = await _authorize(client)
     fake_google.register_code(
@@ -397,7 +394,7 @@ async def test_i5_invalid_google_email_rejected(
     )
     assert resp.status_code == 400
     assert resp.json() == {"detail": "id_token has no usable email"}
-    assert await migrator_conn.fetchval("SELECT count(*) FROM users") == 0
+    assert await mongo.users.count_documents({}) == 0
 
 
 # --- I6: CORS on every error + Retry-After exposed ---------------------------------------
@@ -443,7 +440,6 @@ def _prod(**over: Any) -> dict[str, Any]:
         "access_token_private_key_pem": "x",
         "oauth_state_key": base64.urlsafe_b64encode(b"k" * 32).decode().rstrip("="),
         "launcher_sha256": "ab" * 32,
-        "database_sslmode": "verify-full",
         "trusted_proxy_cidrs": ["10.0.0.0/8"],
         "mail_backend": "resend",
         "resend_api_key": "re_test_key",
@@ -459,10 +455,42 @@ def test_prod_config_valid_baseline():
     assert make_settings(**_prod(trusted_proxy_cidrs=[], direct_client_connections=True))
 
 
-@pytest.mark.parametrize("mode", ["verify-ca", "require", "disable"])
-def test_prod_requires_sslmode_verify_full(mode: str):
-    with pytest.raises(ValidationError, match="verify-full"):
-        make_settings(**_prod(database_sslmode=mode))
+PROD_MONGO_URI = "mongodb+srv://nzt_app:x@cluster0.example.mongodb.net/?authSource=admin"
+
+
+def test_prod_mongodb_tls_is_on_by_default():
+    s = make_settings(**_prod(mongodb_uri=PROD_MONGO_URI))
+    assert s.effective_mongodb_tls is True
+    assert make_settings().effective_mongodb_tls is False  # local test services
+
+
+@pytest.mark.parametrize(
+    ("over", "message"),
+    [
+        ({"mongodb_tls": False}, "NZT_MONGODB_TLS=true"),
+        ({"mongodb_uri": PROD_MONGO_URI + "&tls=false"}, "tls=false"),
+        ({"mongodb_uri": PROD_MONGO_URI + "&ssl=false"}, "tls=false"),
+        ({"mongodb_uri": PROD_MONGO_URI + "&tlsInsecure=true"}, "TLS-weakening"),
+        ({"mongodb_uri": PROD_MONGO_URI + "&tlsAllowInvalidCertificates=true"}, "TLS-weak"),
+        ({"mongodb_uri": PROD_MONGO_URI + "&tlsAllowInvalidHostnames=true"}, "TLS-weak"),
+        ({"mongodb_uri": "mongodb+srv://cluster0.example.mongodb.net/"}, "credentials"),
+        (
+            {"mongodb_migrations_uri": PROD_MONGO_URI + "&tlsInsecure=true"},
+            "NZT_MONGODB_MIGRATIONS_URI",
+        ),
+    ],
+)
+def test_prod_requires_verified_tls_and_credentials(over: dict[str, Any], message: str):
+    with pytest.raises(ValidationError, match=message):
+        make_settings(**_prod(**{"mongodb_uri": PROD_MONGO_URI, **over}))
+
+
+def test_mongodb_uri_scheme_and_database_name_validated():
+    with pytest.raises(ValidationError, match="mongodb://"):
+        make_settings(mongodb_uri="postgresql://u:p@h:5432/d")
+    for bad in ("", "a.b", "a/b", "a b", "$x", "x" * 39):
+        with pytest.raises(ValidationError):
+            make_settings(mongodb_database=bad)
 
 
 def test_prod_requires_trusted_proxies_or_explicit_opt_in():
@@ -480,7 +508,8 @@ def test_prod_requires_https_storage_endpoint():
 @pytest.mark.parametrize(
     ("field", "env"),
     [
-        ("database_url", "NZT_DATABASE_URL"),
+        ("mongodb_uri", "NZT_MONGODB_URI"),
+        ("mongodb_database", "NZT_MONGODB_DATABASE"),
         ("redis_url", "NZT_REDIS_URL"),
     ],
 )
@@ -489,10 +518,16 @@ def test_prod_requires_explicit_infrastructure_urls(
 ):
     from app.config import Settings
 
-    for name in ("NZT_DATABASE_URL", "NZT_MIGRATIONS_DATABASE_URL", "NZT_REDIS_URL"):
+    for name in (
+        "NZT_MONGODB_URI",
+        "NZT_MONGODB_DATABASE",
+        "NZT_MONGODB_MIGRATIONS_URI",
+        "NZT_REDIS_URL",
+    ):
         monkeypatch.delenv(name, raising=False)
     explicit = {
-        "database_url": "postgresql://nzt_app:x@db.internal:5432/nzt",
+        "mongodb_uri": PROD_MONGO_URI,
+        "mongodb_database": "nzt",
         "redis_url": "rediss://default:x@redis.internal:6379/0",
     }
     explicit.pop(field)
@@ -507,14 +542,16 @@ def test_prod_requires_explicit_infrastructure_urls(
     with pytest.raises(ValidationError, match=env):
         Settings(_env_file=None, **kwargs)  # type: ignore[call-arg]
     # The same value supplied through the environment counts as explicit.
-    monkeypatch.setenv(env, "postgresql://u:p@h:5432/d" if "DATABASE" in env else "redis://h:1/0")
+    value = {"NZT_MONGODB_URI": PROD_MONGO_URI, "NZT_MONGODB_DATABASE": "nzt"}
+    monkeypatch.setenv(env, value.get(env, "redis://h:1/0"))
     assert Settings(_env_file=None, **kwargs).is_production  # type: ignore[call-arg]
 
 
 def _prod_kwargs() -> dict[str, Any]:
     return {
         **_prod(),
-        "database_url": "postgresql://nzt_app:x@db.internal:5432/nzt",
+        "mongodb_uri": PROD_MONGO_URI,
+        "mongodb_database": "nzt",
         "redis_url": "rediss://default:x@redis.internal:6379/0",
         "google_client_id": "id",
         "google_client_secret": "secret",
@@ -523,33 +560,33 @@ def _prod_kwargs() -> dict[str, Any]:
     }
 
 
-def test_prod_does_not_require_migrations_url(monkeypatch: pytest.MonkeyPatch):
-    """The API service must not hold the migrator credentials: production Settings() is
-    valid without NZT_MIGRATIONS_DATABASE_URL."""
+def test_prod_does_not_require_migrations_uri(monkeypatch: pytest.MonkeyPatch):
+    """The API service must not hold the schema user's credentials: production Settings()
+    is valid without NZT_MONGODB_MIGRATIONS_URI."""
     from app.config import Settings
 
-    monkeypatch.delenv("NZT_MIGRATIONS_DATABASE_URL", raising=False)
+    monkeypatch.delenv("NZT_MONGODB_MIGRATIONS_URI", raising=False)
     s = Settings(_env_file=None, **_prod_kwargs())  # type: ignore[call-arg]
     assert s.is_production
-    assert s.migrations_database_url is None
+    assert s.mongodb_migrations_uri is None
+    with pytest.raises(RuntimeError, match="NZT_MONGODB_MIGRATIONS_URI is required"):
+        migrations_uri(s)
 
 
-def test_alembic_in_production_requires_migrations_url(monkeypatch: pytest.MonkeyPatch):
-    """alembic keeps requiring the migrator URL in production and fails with a clear error
-    (no silent fallback to the runtime role)."""
-    from app.config import Settings
+def test_schema_step_in_production_requires_migrations_uri(monkeypatch: pytest.MonkeyPatch):
+    """python -m app.schema keeps requiring the schema user's URI in production and fails
+    with a clear error BEFORE connecting (no silent fallback to the runtime user)."""
+    from app.config import Settings, get_settings
 
     kwargs = _prod_kwargs()
-    # Settings() inside alembic/env.py reads the process environment: provide a valid
-    # production environment minus the migrations URL.
     env = {
         "NZT_ENVIRONMENT": "production",
         "NZT_ACCESS_TOKEN_PRIVATE_KEY_PEM": kwargs["access_token_private_key_pem"],
         "NZT_OAUTH_STATE_KEY": kwargs["oauth_state_key"],
         "NZT_LAUNCHER_SHA256": kwargs["launcher_sha256"],
-        "NZT_DATABASE_SSLMODE": "verify-full",
         "NZT_TRUSTED_PROXY_CIDRS": "10.0.0.0/8",
-        "NZT_DATABASE_URL": kwargs["database_url"],
+        "NZT_MONGODB_URI": kwargs["mongodb_uri"],
+        "NZT_MONGODB_DATABASE": kwargs["mongodb_database"],
         "NZT_REDIS_URL": kwargs["redis_url"],
         "NZT_GOOGLE_CLIENT_ID": "id",
         "NZT_GOOGLE_CLIENT_SECRET": "secret",
@@ -561,11 +598,12 @@ def test_alembic_in_production_requires_migrations_url(monkeypatch: pytest.Monke
     }
     for name, value in env.items():
         monkeypatch.setenv(name, value)
-    monkeypatch.delenv("NZT_MIGRATIONS_DATABASE_URL", raising=False)
+    monkeypatch.delenv("NZT_MONGODB_MIGRATIONS_URI", raising=False)
     monkeypatch.chdir("/")  # no stray .env
     assert Settings().is_production  # the environment above is a valid production config
-
-    cfg = alembic_config()
-    del cfg.attributes["database_url"]  # exercise the real URL resolution
-    with pytest.raises(RuntimeError, match="NZT_MIGRATIONS_DATABASE_URL is required"):
-        command.upgrade(cfg, "head", sql=True)  # offline mode: never touches a database
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(RuntimeError, match="NZT_MONGODB_MIGRATIONS_URI is required"):
+            schema_main([])
+    finally:
+        get_settings.cache_clear()
