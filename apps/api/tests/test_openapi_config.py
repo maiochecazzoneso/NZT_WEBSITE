@@ -53,6 +53,11 @@ def test_openapi_matches_spec_section_8(app: FastAPI):
         "/api/v1/auth/verify-email",
         "/api/v1/auth/resend-verification",
         "/api/v1/auth/me",
+        # Additions (admin dashboard login, separate from customers), see tests/test_admin_auth.py
+        "/api/v1/admin/auth/login",
+        "/api/v1/admin/auth/refresh",
+        "/api/v1/admin/auth/logout",
+        "/api/v1/admin/me",
     }
     token = {"access_token", "token_type", "expires_in"}
 

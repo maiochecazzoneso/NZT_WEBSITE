@@ -17,6 +17,7 @@ RUN corepack enable
 # Monorepo: il lockfile contiene anche portale e design system, quindi servono i loro package.json
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/portal/package.json apps/portal/
+COPY apps/admin/package.json apps/admin/
 COPY packages/ui/package.json packages/ui/
 RUN pnpm install --frozen-lockfile --filter nzt-solutions-web...
 

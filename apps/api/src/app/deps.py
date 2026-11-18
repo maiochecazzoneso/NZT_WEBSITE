@@ -165,3 +165,15 @@ def require_entitlement(
         return user
 
     return dependency
+
+
+async def get_current_admin(user: CurrentUser, db: DbSession) -> AuthenticatedUser:
+    """Admin-only resources: valid DPoP-bound token AND users.role == 'admin' read from the
+    database on every request (a demoted/disabled admin loses access immediately)."""
+    role = await db.scalar(select(User.role).where(User.id == user.id, User.is_active.is_(True)))
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Administrator access required")
+    return user
+
+
+CurrentAdmin = Annotated[AuthenticatedUser, Depends(get_current_admin)]

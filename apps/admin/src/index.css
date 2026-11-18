@@ -1,0 +1,30 @@
+@import 'tailwindcss';
+@import '@nzt/ui/tokens.css';
+
+/* Componenti del design system condiviso (fuori da apps/admin): scansione esplicita */
+@source '../../../packages/ui/src';
+
+@layer base {
+  body {
+    min-height: 100dvh;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+  }
+
+  a:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.6);
+    outline-offset: 3px;
+  }
+}
+
+/* prefers-reduced-motion: nessuna transizione o animazione (hover dei bottoni, pulse dei badge…) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

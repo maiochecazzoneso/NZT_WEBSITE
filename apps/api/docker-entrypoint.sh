@@ -12,8 +12,8 @@ if [ "${NZT_BOOTSTRAP:-false}" = "true" ]; then
     exit 1
   fi
   NZT_MIGRATIONS_DATABASE_URL="$NZT_BOOTSTRAP_MIGRATIONS_URL" alembic upgrade head
-  NZT_SEED_DEV_ADMIN=true python scripts/seed_dev_admin.py
+  NZT_SEED_DEV_USERS=true python scripts/seed_dev_users.py
 fi
 
-unset NZT_BOOTSTRAP NZT_BOOTSTRAP_MIGRATIONS_URL NZT_SEED_DEV_ADMIN
+unset NZT_BOOTSTRAP NZT_BOOTSTRAP_MIGRATIONS_URL NZT_SEED_DEV_USERS
 exec "$@"

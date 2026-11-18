@@ -22,7 +22,7 @@ from app.middleware import (
     ServerErrorGuardMiddleware,
 )
 from app.ratelimit import RateLimiter
-from app.routers import auth, downloads, google, health, verification
+from app.routers import admin_auth, auth, downloads, google, health, verification
 from app.security.dpop import DPoPValidator
 from app.security.passwords import PasswordService
 from app.security.sealed import Sealer
@@ -120,6 +120,7 @@ def create_app(
     app.include_router(google.router)
     app.include_router(verification.router)
     app.include_router(downloads.router)
+    app.include_router(admin_auth.router)
 
     # Order: last added = outermost. Outer -> inner:
     #   SecurityHeaders -> CORS -> ServerErrorGuard -> BodySizeLimit -> app
@@ -131,7 +132,7 @@ def create_app(
     app.add_middleware(ServerErrorGuardMiddleware)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.portal_origins,
+        allow_origins=[*settings.portal_origins, *settings.admin_origins],
         allow_credentials=True,
         allow_methods=["GET", "POST"],
         allow_headers=["Authorization", "Content-Type", "DPoP"],

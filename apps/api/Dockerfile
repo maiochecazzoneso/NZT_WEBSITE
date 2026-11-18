@@ -8,7 +8,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
 COPY alembic ./alembic
 COPY alembic.ini ./
-COPY scripts/seed_dev_admin.py ./scripts/seed_dev_admin.py
+COPY scripts/seed_dev_users.py ./scripts/seed_dev_users.py
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
 RUN uv sync --frozen --no-dev
 # COPY conserva i permessi dell'host (es. file 600 su macOS): l'utente non privilegiato deve poter leggere il codice

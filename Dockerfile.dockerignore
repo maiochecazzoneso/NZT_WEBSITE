@@ -27,4 +27,6 @@ Dockerfile
 apps/api
 apps/portal/src
 apps/portal/tests
+apps/admin/src
+apps/admin/tests
 packages/ui/src

@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     portal_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["https://clienti.nztsolutions.it"]
     )
+    # Admin dashboard origins (separate app/origin from the customer portal): CORS + CSP only.
+    admin_origins: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["https://admin.nztsolutions.it"]
+    )
     storage_public_origin: str = "https://storage.nztsolutions.it"
 
     # --- Database ---------------------------------------------------------------------
@@ -136,7 +140,9 @@ class Settings(BaseSettings):
     email_verification_ttl_seconds: int = Field(default=86_400, ge=3_600, le=172_800)
 
     # ---------------------------------------------------------------------------------
-    @field_validator("portal_origins", "trusted_proxy_cidrs", "google_issuers", mode="before")
+    @field_validator(
+        "portal_origins", "admin_origins", "trusted_proxy_cidrs", "google_issuers", mode="before"
+    )
     @classmethod
     def _split_csv(cls, v: object) -> object:
         if isinstance(v, str):
@@ -153,6 +159,11 @@ class Settings(BaseSettings):
     def _check_portals(cls, v: list[str]) -> list[str]:
         if not v:
             raise ValueError("at least one portal origin is required")
+        return [_origin(o) for o in v]
+
+    @field_validator("admin_origins")
+    @classmethod
+    def _check_admins(cls, v: list[str]) -> list[str]:
         return [_origin(o) for o in v]
 
     @field_validator("trusted_proxy_cidrs")
@@ -242,7 +253,12 @@ class Settings(BaseSettings):
                 "production requires NZT_TRUSTED_PROXY_CIDRS (or the explicit opt-in "
                 "NZT_DIRECT_CLIENT_CONNECTIONS=true when no reverse proxy is in front)"
             )
-        urls = [self.api_public_base_url, self.storage_public_origin, *self.portal_origins]
+        urls = [
+            self.api_public_base_url,
+            self.storage_public_origin,
+            *self.portal_origins,
+            *self.admin_origins,
+        ]
         if any(not u.startswith("https://") for u in urls):
             raise ValueError("production public URLs must be https")
         storage = urlsplit(self.storage_endpoint_url)

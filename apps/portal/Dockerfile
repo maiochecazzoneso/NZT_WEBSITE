@@ -4,6 +4,7 @@ RUN corepack enable
 WORKDIR /repo
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/portal/package.json apps/portal/
+COPY apps/admin/package.json apps/admin/
 COPY packages/ui/package.json packages/ui/
 RUN pnpm install --frozen-lockfile --filter @nzt/portal...
 COPY packages/ui packages/ui

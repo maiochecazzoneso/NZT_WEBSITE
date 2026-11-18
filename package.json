@@ -19,7 +19,10 @@
     "audit:deps": "pnpm audit --audit-level=high",
     "dev:portal": "pnpm --filter @nzt/portal dev",
     "build:portal": "pnpm --filter @nzt/portal build",
-    "test:portal": "pnpm --filter @nzt/portal test"
+    "test:portal": "pnpm --filter @nzt/portal test",
+    "dev:admin": "pnpm --filter @nzt/admin dev",
+    "build:admin": "pnpm --filter @nzt/admin build",
+    "test:admin": "pnpm --filter @nzt/admin test"
   },
   "dependencies": {
     "@astrojs/node": "^11.1.13",
