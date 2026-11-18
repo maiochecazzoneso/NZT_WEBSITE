@@ -4,6 +4,11 @@
 :{$PORT:80} {
 	encode zstd gzip
 
+	# Controllo di salute della piattaforma (il railway.json della radice impone /healthz)
+	handle /healthz {
+		respond "ok" 200
+	}
+
 	@admin host {$ADMIN_HOST:admin.localhost}
 
 	handle @admin {
