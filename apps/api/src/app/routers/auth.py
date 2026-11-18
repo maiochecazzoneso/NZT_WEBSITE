@@ -12,7 +12,6 @@ from starlette.background import BackgroundTask
 
 from app.cookies import REFRESH_COOKIE, clear_refresh_cookie, set_refresh_cookie
 from app.db import (
-    EMAIL_COLLATION,
     PROVIDER_LOCAL,
     ROLE_ADMIN,
     identity_document,
@@ -77,7 +76,6 @@ async def password_login(
     user = await services.db.users.find_one(
         {"email": payload.email},
         {"passwordHash": 1, "isActive": 1, "role": 1},
-        collation=EMAIL_COLLATION,
     )
     if (
         user is None
@@ -182,6 +180,17 @@ async def register(
         services.db, user["_id"], ttl_seconds=services.settings.email_verification_ttl_seconds
     )
     issued = await services.sessions.create_session(user_id=user["_id"], jkt=proof.jkt)
+    # Same post-session re-check as password_login: a Google takeover that ran between
+    # the account insert and the session creation found no family to revoke; it has
+    # removed the password, so this session is revoked here and nothing is handed out.
+    if (
+        await services.db.users.find_one(
+            {"_id": user["_id"], "passwordHash": password_hash, "isActive": True}, {"_id": 1}
+        )
+        is None
+    ):
+        await services.sessions.revoke_family(issued.family_id, reason="credentials_changed")
+        return error_response(400, REGISTRATION_FAILED)
     response = token_response(
         issued, status_code=201, refresh_ttl=services.settings.refresh_token_ttl_seconds
     )

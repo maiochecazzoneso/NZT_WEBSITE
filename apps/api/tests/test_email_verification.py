@@ -538,3 +538,76 @@ async def test_login_racing_a_takeover_never_keeps_a_session(
     assert "set-cookie" not in resp.headers
     newest = await mongo.families.find({}).sort("createdAt", -1).limit(1).to_list()
     assert (newest[0]["isRevoked"], newest[0]["revokedReason"]) == (True, "credentials_changed")
+
+
+async def test_registration_racing_a_takeover_never_keeps_a_session(
+    app: FastAPI, client: httpx.AsyncClient, mongo: Collections, monkeypatch: pytest.MonkeyPatch
+):
+    """Review finding 1: a Google takeover running between the account insert and the
+    session creation of /register found no family to revoke. The registration re-checks
+    the password after creating its session: it fails and its family is revoked."""
+    import app.routers.auth as auth_router
+
+    original = auth_router.issue_verification_token
+
+    async def issue_then_takeover(db: Any, user_id: Any, **kwargs: Any) -> str:
+        raw = await original(db, user_id, **kwargs)
+        await mongo.users.update_one(
+            {"_id": user_id}, {"$set": {"passwordHash": None, "isVerified": True}}
+        )
+        return raw
+
+    monkeypatch.setattr(auth_router, "issue_verification_token", issue_then_takeover)
+    resp = await register(client, DPoPKey(), email=VICTIM, password=ATTACKER_PASSWORD)
+    assert resp.status_code == 400
+    assert "set-cookie" not in resp.headers
+    fam = await one(mongo.families)
+    assert (fam["isRevoked"], fam["revokedReason"]) == (True, "credentials_changed")
+    assert outbox(app) == []  # no verification mail for an aborted registration
+
+
+async def test_interrupted_takeover_locks_the_attacker_out_and_is_completed_later(
+    app: FastAPI,
+    client_factory: ClientFactory,
+    fake_google: FakeGoogle,
+    mongo: Collections,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Review finding 2: the takeover is not one transaction. If it fails right after
+    the atomic swap, the attacker must already be locked out (takeoverPending) and the
+    victim's next Google sign-in must complete the revocation."""
+    attacker = client_factory("198.51.100.68")
+    key_a = DPoPKey()
+    reg = await register(attacker, key_a, email=VICTIM, password=ATTACKER_PASSWORD)
+    at_a, cookie_a = reg.json()["access_token"], refresh_cookie_of(reg)
+
+    sessions = app.state.services.sessions
+    original = sessions.revoke_all_for_user
+
+    async def boom(*args: Any, **kwargs: Any) -> int:
+        raise RuntimeError("simulated failure after the swap")
+
+    monkeypatch.setattr(sessions, "revoke_all_for_user", boom)
+    victim = client_factory("203.0.113.97")
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False, client=("203.0.113.97", 1))
+    async with httpx.AsyncClient(transport=transport, base_url=victim.base_url) as v:
+        failed = await _flow(
+            v, fake_google, {"sub": "g-int", "email": VICTIM, "email_verified": True}
+        )
+    assert failed.status_code == 500
+    assert (await one(mongo.users)).get("takeoverPending") is True
+    # Families are not revoked yet, but the attacker is already locked out.
+    assert (await one(mongo.families))["isRevoked"] is False
+    assert (await authed(attacker, key_a, "GET", ME, at_a)).status_code == 401
+    assert (await refresh(attacker, key_a, cookie_a)).status_code == 401
+
+    monkeypatch.setattr(sessions, "revoke_all_for_user", original)
+    again = await _flow(
+        victim, fake_google, {"sub": "g-int", "email": VICTIM, "email_verified": True}
+    )
+    assert again.status_code == 200, again.text
+    user = await one(mongo.users)
+    assert "takeoverPending" not in user
+    assert user["passwordHash"] is None
+    revoked = await mongo.families.find({"dpopJkt": key_a.thumbprint}).to_list()
+    assert all(f["isRevoked"] for f in revoked)

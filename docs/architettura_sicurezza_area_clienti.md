@@ -198,7 +198,7 @@ Database dedicato (`NZT_MONGODB_DATABASE`, es. `nzt`) su un cluster MongoDB este
 
 | Collection | Campi | Indici | Note di sicurezza |
 | :--- | :--- | :--- | :--- |
-| `users` | `_id`, `email` (≤255), `passwordHash` (null per account solo Google), `isActive`, `isVerified`, `role` ∈ {`customer`,`admin`}, `identities[]` {`provider` ∈ {`local`,`google`}, `providerUserId`, `createdAt`}, `entitlements[]` {`productCode`, `isEnabled`, `validUntil` (null = perpetua), `createdAt`}, `createdAt`, `updatedAt` | `email_ci_unique` (UNIQUE, collation `en` strength 2 = case-insensitive), `identities_unique` (UNIQUE parziale su provider + subject) | Identità ed entitlement **incorporati**: una sola lettura per richiesta autenticata (§7.3). Un'identità esterna appartiene a un solo utente |
+| `users` | `_id`, `email` (≤255), `passwordHash` (null per account solo Google), `isActive`, `isVerified`, `role` ∈ {`customer`,`admin`}, `identities[]` {`provider` ∈ {`local`,`google`}, `providerUserId`, `createdAt`}, `entitlements[]` {`productCode`, `isEnabled`, `validUntil` (null = perpetua), `createdAt`}, `createdAt`, `updatedAt` | `email_unique` (UNIQUE, corrispondenza **esatta** sulla forma canonica minuscola, come l'indice `lower(email)` di PostgreSQL: nessuna collation ICU, che equiparerebbe indirizzi diversi come lettere a larghezza piena o `ß`/`ss`), `identities_unique` (UNIQUE parziale su provider + subject) | Identità ed entitlement **incorporati**: una sola lettura per richiesta autenticata (§7.3). Un'identità esterna appartiene a un solo utente |
 | `refreshTokenFamilies` | `_id`, `userId`, `dpopJkt`, `isRevoked`, `revokedReason`, `currentTokenHash`, `expiresAt`, `createdAt`, `updatedAt` | `current_token_unique` (UNIQUE), `user`, `expires_ttl` (TTL) | Una famiglia = una sessione; contiene l'hash del token **corrente** (rotazione atomica, §9.1) |
 | `refreshTokens` | `_id` = SHA-256 esadecimale del token, `familyId`, `expiresAt`, `createdAt` | `expires_ttl` (TTL) | **Ogni** token emesso → la sua famiglia (reuse detection, rate limit per famiglia, logout). Mai il valore in chiaro |
 | `emailVerificationTokens` | `_id` = SHA-256 del token, `userId`, `expiresAt`, `usedAt`, `createdAt` | `user`, `expires_ttl` (TTL) | Monouso (§11.3) |
@@ -211,8 +211,9 @@ Database dedicato (`NZT_MONGODB_DATABASE`, es. `nzt`) su un cluster MongoDB este
 **`downloadLogs.userId` (D-A3).** La specifica chiedeva `NOT NULL` + `ON DELETE SET NULL` (incompatibili). In MongoDB non ci sono chiavi esterne: il documento di audit resta quando l'utente viene cancellato (`test_downloads::test_audit_rows_survive_user_deletion`). L'API non cancella utenti; un eventuale strumento di cancellazione (GDPR) dovrà azzerare anche `userId` nei log.
 
 Altri dettagli:
-* Unicità case-insensitive dell'email (`test_mongo::test_case_insensitive_unique_email`) e dell'identità esterna (`test_external_identity_belongs_to_one_user`).
-* La coerenza codice ↔ database è verificata da `python -m app.schema --check` (exit 1 se validatori o indici differiscono; `test_mongo::test_schema_is_idempotent_and_in_sync`, `test_schema_drift_is_detected_and_repaired`).
+* Unicità dell'email canonica e indirizzi simili trattati come account distinti (`test_mongo::test_unique_canonical_email`, `test_lookalike_addresses_are_distinct_accounts`) e dell'identità esterna (`test_external_identity_belongs_to_one_user`).
+* `takeoverPending` (campo opzionale, solo `true`): impostato dal takeover Google nello stesso aggiornamento atomico che rimuove le credenziali, rimosso solo a revoca completata (§11.3).
+* La coerenza codice ↔ database è verificata da `python -m app.schema --check` (exit 1 se validatori o indici differiscono; un indice con definizione cambiata viene ricostruito e gli indici ritirati (`retired_indexes`, es. il vecchio `email_ci_unique`) eliminati da `python -m app.schema`; `test_mongo::test_schema_is_idempotent_and_in_sync`, `test_schema_drift_is_detected_and_repaired`).
 * Le query critiche usano tutte un indice, mai una scansione completa (`test_mongo::test_hot_queries_use_indexes`, verificato con `explain`). La ricerca per identità Google include `identities.providerUserId: {$exists: true}` (`db.identity_filter`) perché il planner usi l'indice parziale.
 
 ---
@@ -548,13 +549,13 @@ Ordine di risoluzione in `_resolve_user`:
 | Identità `google`/`sub` già collegata, utente attivo | Login su quell'utente |
 | Identità collegata, utente disattivato | `403 Account is disabled` (AGGIUNTA) |
 | Email esistente, utente disattivato | `403 Account is disabled` (AGGIUNTA) |
-| Email esistente con `isVerified = false` | **Takeover (DEVIAZIONE da §5.3, decisione utente)**: un unico compare-and-swap atomico sul documento utente (condizione: ancora non verificato, attivo, senza identità Google) imposta `passwordHash = null`, `isVerified = true` e sostituisce **tutte** le identità con quella Google; poi token di verifica pendenti eliminati, **tutte** le famiglie revocate (`revokedReason = google_takeover`) + marker `user_revoked_after_ms`; si attende che l'orologio Redis superi il marker e solo allora viene creata la sessione DPoP del proprietario. Se lo swap non riesce (l'account è stato verificato nel frattempo, disattivato o collegato) il takeover non avviene. Motivo: con la regola originale un pre-registratore bloccava per sempre l'accesso Google della vittima (revisione M2); `email_verified=true` di Google prova il possesso della casella, una password su un account mai verificato no |
+| Email esistente con `isVerified = false` | **Takeover (DEVIAZIONE da §5.3, decisione utente)**: un unico compare-and-swap atomico sul documento utente (condizione: ancora non verificato, attivo, senza identità Google) imposta `passwordHash = null`, `isVerified = true`, `takeoverPending = true` e sostituisce **tutte** le identità con quella Google. Da quell'istante l'utente non può autenticarsi né fare refresh (filtro `takeoverPending` assente in `deps.py` e nella rotazione): se un passo successivo fallisce (errore MongoDB/Redis, crash, richiesta annullata) chi aveva pre-registrato l'account è comunque già escluso, e il successivo accesso Google della vittima completa la pulizia (`_complete_takeover`, idempotente). Poi token di verifica pendenti eliminati, **tutte** le famiglie revocate (`revokedReason = google_takeover`) + marker `user_revoked_after_ms`; si attende che l'orologio Redis superi il marker e solo allora viene creata la sessione DPoP del proprietario. Se lo swap non riesce (l'account è stato verificato nel frattempo, disattivato o collegato) il takeover non avviene. Motivo: con la regola originale un pre-registratore bloccava per sempre l'accesso Google della vittima (revisione M2); `email_verified=true` di Google prova il possesso della casella, una password su un account mai verificato no |
 | Email esistente verificata, già collegata a un **altro** `sub` Google | `409 Account already linked to a different Google identity` (AGGIUNTA) |
 | Email esistente verificata | `$push` dell'identità Google con filtro atomico (attivo, verificato, nessuna identità Google) e login (**CONFORME**) |
 | Email nuova | Nuovo utente `isVerified=true`, `passwordHash=null` + identità Google (**CONFORME**) |
 | Conflitto di unicità concorrente | `409 Account linking conflict, please retry` |
 
-Corsa con un login a password concorrente (senza lock di riga): il login (`routers/auth.py::password_login`, comune a cliente e admin) crea la sessione e **poi** ricontrolla che l'hash verificato sia ancora quello corrente. Il takeover rimuove prima la password e **poi** revoca tutte le famiglie: o la rilettura del login vede la password rimossa (la nuova famiglia viene revocata, `credentials_changed`, risposta `401`), oppure è avvenuta prima della rimozione, quindi la famiglia esisteva già e il takeover la revoca. Il rehash Argon2 è anch'esso un compare-and-swap (non riporta mai in vita una password rimossa). Verificato da `test_email_verification::test_login_racing_a_takeover_never_keeps_a_session`. Verifica email (AGGIUNTA, `routers/verification.py`): `POST /verify-email {token}` pubblico, senza DPoP (non crea sessioni), 10/min per IP, token sconosciuto/malformato/usato/scaduto ⇒ unico `400`; `POST /resend-verification` autenticato DPoP (usa l'email dell'utente autenticato: nessuna enumerazione), 3/h per utente + 10/h per IP, no-op se già verificato, invalida i token pendenti; `GET /me` ⇒ `{email, is_verified}`. Il link è `<primo origin del portale>/verifica-email#token=…` (frammento: mai nei log né nel `Referer`); il portale lo legge una volta, ripulisce l'URL con `history.replaceState` e lo invia con una POST esplicita. Rischio residuo: R-2.
+Corsa con un login a password concorrente (senza lock di riga): il login (`routers/auth.py::password_login`, comune a cliente e admin) crea la sessione e **poi** ricontrolla che l'hash verificato sia ancora quello corrente. Il takeover rimuove prima la password e **poi** revoca tutte le famiglie: o la rilettura del login vede la password rimossa (la nuova famiglia viene revocata, `credentials_changed`, risposta `401`), oppure è avvenuta prima della rimozione, quindi la famiglia esisteva già e il takeover la revoca. Il rehash Argon2 è anch'esso un compare-and-swap (non riporta mai in vita una password rimossa). La **registrazione** fa lo stesso controllo dopo aver creato la sessione: un takeover avvenuto tra l'inserimento dell'account e la creazione della sessione non trovava famiglie da revocare; ora la registrazione risponde `400 Registration failed`, revoca la propria famiglia e non invia l'email. Verificato da `test_email_verification::test_login_racing_a_takeover_never_keeps_a_session`, `test_registration_racing_a_takeover_never_keeps_a_session`, `test_interrupted_takeover_locks_the_attacker_out_and_is_completed_later` (questi due e i test su email simili e separatore `;` falliscono sul codice precedente alla revisione indipendente della migrazione). Verifica email (AGGIUNTA, `routers/verification.py`): `POST /verify-email {token}` pubblico, senza DPoP (non crea sessioni), 10/min per IP, token sconosciuto/malformato/usato/scaduto ⇒ unico `400`; `POST /resend-verification` autenticato DPoP (usa l'email dell'utente autenticato: nessuna enumerazione), 3/h per utente + 10/h per IP, no-op se già verificato, invalida i token pendenti; `GET /me` ⇒ `{email, is_verified}`. Il link è `<primo origin del portale>/verifica-email#token=…` (frammento: mai nei log né nel `Referer`); il portale lo legge una volta, ripulisce l'URL con `history.replaceState` e lo invia con una POST esplicita. Rischio residuo: R-2.
 
 ---
 
@@ -712,7 +713,7 @@ Verificato con il server reale (`test_mongo::test_app_user_is_dml_only_on_its_da
 
 ### 16.3 TLS e rete verso MongoDB — CONFORME
 
-`apps/api/src/app/config.py` + `db.py`. In produzione TLS è obbligatorio (`NZT_MONGODB_TLS`, default `true` in produzione) con verifica del certificato **e** del nome host (default di PyMongo, equivalente a `verify-full`); l'avvio fallisce se l'URI (dell'API o dello schema) contiene `tls=false`/`ssl=false`, `tlsInsecure`, `tlsAllowInvalidCertificates`, `tlsAllowInvalidHostnames` o se non contiene credenziali (`test_security_fixes::test_prod_requires_verified_tls_and_credentials`). La validazione dell'URI non esegue risoluzioni DNS (l'SRV di `mongodb+srv://` viene risolto solo dal driver). CA personalizzata: `NZT_MONGODB_TLS_CA_FILE`.
+`apps/api/src/app/config.py` + `db.py`. In produzione TLS è obbligatorio (`NZT_MONGODB_TLS`, default `true` in produzione) con verifica del certificato **e** del nome host (default di PyMongo, equivalente a `verify-full`); l'avvio fallisce se l'URI (dell'API o dello schema) contiene `tls=false`/`ssl=false`, `tlsInsecure`, `tlsAllowInvalidCertificates`, `tlsAllowInvalidHostnames`, `tlsDisableOCSPEndpointCheck`, `tlsDisableCertificateRevocationCheck` (anche con il separatore `;`, accettato dal driver) o se non contiene credenziali (`test_security_fixes::test_prod_requires_verified_tls_and_credentials`). La validazione dell'URI non esegue risoluzioni DNS (l'SRV di `mongodb+srv://` viene risolto solo dal driver). CA personalizzata: `NZT_MONGODB_TLS_CA_FILE`.
 
 Il cluster esterno **non** è sulla rete privata Railway: la regola "Zero Public DB" del documento generale (§1.1) va soddisfatta lato cluster con **IP Access List** limitata agli IP di uscita del servizio API (o private endpoint / peering se il piano lo consente), mai `0.0.0.0/0` (**NON VERIFICATO**, O-2).
 
@@ -907,7 +908,8 @@ Migrazione a MongoDB (2026-11-18), eseguita contro `mongod` 8.0.4 in replica set
 
 | Controllo | Risultato |
 | :--- | :--- |
-| `uv run pytest -q` | **211 passed** (riferimento prima della migrazione: 184 su PostgreSQL); 3 esecuzioni consecutive identiche |
+| `uv run pytest -q` | **220 passed** (riferimento prima della migrazione: 184 su PostgreSQL) |
+| Revisione indipendente della migrazione | 4 difetti riprodotti e corretti: registrazione in corsa con un takeover, takeover non atomico, collation email, separatore `;` nell'URI; un test di regressione per ciascuno |
 | `ruff check` / `ruff format --check` | Nessun problema |
 | `mypy` strict su `src/app` | Nessun errore (31 file) |
 | `python -m app.schema` / `--check` | Idempotente; `nzt_test is up to date`; con l'utente applicativo: rifiuto esplicito (privilegio minimo) |
@@ -917,8 +919,8 @@ Migrazione a MongoDB (2026-11-18), eseguita contro `mongod` 8.0.4 in replica set
 | File di test | Test | Ambito |
 | :--- | ---: | :--- |
 | `test_dpop.py` | 25 | Prova DPoP, confusione di algoritmo, `ath`, replay, autenticazione delle risorse |
-| `test_email_verification.py` | 24 | Verifica email, takeover Google, corsa login/takeover, schema della collection, mailer |
-| `test_mongo.py` | 22 | Schema idempotente e drift, validatori, unicità, privilegio minimo reale, NoSQL injection, log senza dati, uso degli indici (`explain`) |
+| `test_email_verification.py` | 26 | Verifica email, takeover Google, corsa login/takeover, schema della collection, mailer |
+| `test_mongo.py` | 25 | Schema idempotente e drift, validatori, unicità, privilegio minimo reale, NoSQL injection, log senza dati, uso degli indici (`explain`) |
 | `test_auth_flows.py` | 17 | Register/login/refresh/logout, attributi cookie, RTR, reuse, concorrenza |
 | `test_http_hardening.py` | 16 | Header su ogni risposta, CORS, docs, limite body, errori senza eco |
 | `test_google.py` | 13 | Authorize, state, PKCE, nonce, ID token, collegamento account |
@@ -926,9 +928,9 @@ Migrazione a MongoDB (2026-11-18), eseguita contro `mongod` 8.0.4 in replica set
 | `test_downloads.py` | 10 | Entitlement (anche revoca immediata), audit, catalogo lato server, presign |
 | `test_openapi_config.py` | 10 | Contratti §8, configurazione, guardie di produzione, Argon2id, politica password |
 | `test_admin_auth.py` | 8 | Login admin separato, ruolo riletto, admin declassato (anche al refresh) |
-| `test_security_fixes.py` | 52 | Regressioni della revisione indipendente + guardie di produzione MongoDB (TLS, credenziali, URI dello schema) |
+| `test_security_fixes.py` | 56 | Regressioni della revisione indipendente + guardie di produzione MongoDB (TLS, credenziali, URI dello schema) |
 | `test_pg_migration.py` | 2 | Trasformazione dei dati PostgreSQL validata dai validatori reali; idempotenza (da rimuovere con lo script dopo la migrazione) |
-| **Totale** | **211** | |
+| **Totale** | **220** | |
 
 Misure dal vivo (uvicorn, `NZT_TRUSTED_PROXY_CIDRS=127.0.0.1/32`, 100 login fasulli in parallelo da 100 IP distinti, `NZT_ARGON2_MAX_CONCURRENCY=2`): prima della correzione un login legittimo impiegava 1,5–6,3 s (coda illimitata, login fasulli fino a 6,5 s); dopo, il login legittimo durante il picco riceve in 0,2–0,8 s un `503` con `Retry-After: 1` e, ripetuto dopo l'attesa indicata, riesce in 1,4–1,9 s totali; i login fasulli eccedenti sono scartati in ≤ 1,6 s. Registrazioni con 32 hop `X-Forwarded-For` falsificati: prima 8/8 accettate, dopo `201, 201, 201, 429…`. Prova DPoP con `iat: NaN`: prima `500`, dopo `401`.
 
@@ -1093,7 +1095,7 @@ redis-cli SET user_revoked_after_ms:<uuid> "$(( $(date +%s) * 1000 + 999 ))" EX 
 - [ ] Redis non raggiungibile da Internet; cluster MongoDB con IP Access List ristretta (nessun `0.0.0.0/0`).
 - [ ] Dati PostgreSQL migrati (§24.2), poi script di migrazione e servizio PostgreSQL rimossi.
 - [ ] Uvicorn avviato con `--no-proxy-headers`.
-- [ ] Test backend (211) e portale (110) verdi sul commit da rilasciare; `pnpm audit --prod` e `pip-audit` senza vulnerabilità aperte.
+- [ ] Test backend (220) e portale (110) verdi sul commit da rilasciare; `pnpm audit --prod` e `pip-audit` senza vulnerabilità aperte.
 - [ ] Prova manuale end-to-end in produzione: registrazione, login, reload, Google, download, logout.
 - [ ] Decisione presa su O-P1 (finestra di grazia), verifica email (R-2/M2), replay di token storici (R-21/L1), cookie tossing (R-18/L5), privilegi su `downloadLogs` (R-23/I4).
 

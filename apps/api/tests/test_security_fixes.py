@@ -473,6 +473,13 @@ def test_prod_mongodb_tls_is_on_by_default():
         ({"mongodb_uri": PROD_MONGO_URI + "&tlsInsecure=true"}, "TLS-weakening"),
         ({"mongodb_uri": PROD_MONGO_URI + "&tlsAllowInvalidCertificates=true"}, "TLS-weak"),
         ({"mongodb_uri": PROD_MONGO_URI + "&tlsAllowInvalidHostnames=true"}, "TLS-weak"),
+        ({"mongodb_uri": PROD_MONGO_URI + ";tlsInsecure=true"}, "TLS-weak"),  # ";" separator
+        ({"mongodb_uri": PROD_MONGO_URI + ";tls=false"}, "tls=false"),
+        ({"mongodb_uri": PROD_MONGO_URI + "&tlsDisableOCSPEndpointCheck=true"}, "TLS-weak"),
+        (
+            {"mongodb_uri": PROD_MONGO_URI + "&tlsDisableCertificateRevocationCheck=true"},
+            "TLS-weak",
+        ),
         ({"mongodb_uri": "mongodb+srv://cluster0.example.mongodb.net/"}, "credentials"),
         (
             {"mongodb_migrations_uri": PROD_MONGO_URI + "&tlsInsecure=true"},

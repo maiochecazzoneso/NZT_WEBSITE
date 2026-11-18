@@ -20,7 +20,7 @@ from redis.asyncio import Redis
 
 from app.client_ip import ClientIPResolver
 from app.config import Settings
-from app.db import ROLE_ADMIN, Client, Collections, utcnow
+from app.db import NOT_TAKEOVER_PENDING, ROLE_ADMIN, Client, Collections, utcnow
 from app.errors import www_authenticate_dpop
 from app.ratelimit import RateLimiter
 from app.security.dpop import DPoPError, DPoPProof, DPoPValidator
@@ -148,7 +148,9 @@ async def get_current_user(
         user_id=claims.sub, jkt=claims.jkt, iat=claims.iat, iat_ms=claims.iat_ms
     ):
         raise dpop_unauthorized("token revoked", error="invalid_token")
-    doc = await services.db.users.find_one({"_id": claims.sub, "isActive": True}, _USER_PROJECTION)
+    doc = await services.db.users.find_one(
+        {"_id": claims.sub, "isActive": True, **NOT_TAKEOVER_PENDING}, _USER_PROJECTION
+    )
     if doc is None:
         raise dpop_unauthorized("unknown or inactive user", error="invalid_token")
     return AuthenticatedUser(

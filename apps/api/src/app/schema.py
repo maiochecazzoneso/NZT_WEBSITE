@@ -28,7 +28,6 @@ from pymongo.errors import OperationFailure
 from app.config import Settings, get_settings
 from app.db import (
     DOWNLOAD_LOGS,
-    EMAIL_COLLATION,
     EMAIL_VERIFICATION_TOKENS,
     PROVIDER_GOOGLE,
     PROVIDER_LOCAL,
@@ -36,6 +35,7 @@ from app.db import (
     REFRESH_TOKENS,
     ROLE_ADMIN,
     ROLE_CUSTOMER,
+    TAKEOVER_PENDING,
     USERS,
     Document,
     create_client,
@@ -57,18 +57,19 @@ def _nullable(schema: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _object(properties: dict[str, Any]) -> dict[str, Any]:
-    """Every listed property is required and nothing else is allowed."""
+def _object(properties: dict[str, Any], optional: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Every listed property is required, ``optional`` ones may be absent, nothing else
+    is allowed."""
     return {
         "bsonType": "object",
         "required": list(properties),
         "additionalProperties": False,
-        "properties": properties,
+        "properties": {**properties, **(optional or {})},
     }
 
 
-def _validator(properties: dict[str, Any]) -> Document:
-    return {"$jsonSchema": _object(properties)}
+def _validator(properties: dict[str, Any], optional: dict[str, Any] | None = None) -> Document:
+    return {"$jsonSchema": _object(properties, optional)}
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,8 @@ class CollectionSpec:
     name: str
     validator: Document
     indexes: list[IndexModel] = field(default_factory=list)
+    # Indexes of earlier schema versions, dropped by apply_schema (never re-create them).
+    retired_indexes: tuple[str, ...] = ()
 
 
 SPECS: tuple[CollectionSpec, ...] = (
@@ -112,15 +115,12 @@ SPECS: tuple[CollectionSpec, ...] = (
                 },
                 "createdAt": _DATE,
                 "updatedAt": _DATE,
-            }
+            },
+            optional={TAKEOVER_PENDING: {"enum": [True]}},
         ),
         [
-            IndexModel(
-                [("email", ASCENDING)],
-                name="email_ci_unique",
-                unique=True,
-                collation=EMAIL_COLLATION,
-            ),
+            # Exact match on the canonical (lower-cased, validated) email.
+            IndexModel([("email", ASCENDING)], name="email_unique", unique=True),
             # One external identity (provider, subject) belongs to at most one user.
             IndexModel(
                 [("identities.provider", ASCENDING), ("identities.providerUserId", ASCENDING)],
@@ -129,6 +129,8 @@ SPECS: tuple[CollectionSpec, ...] = (
                 partialFilterExpression={"identities.providerUserId": {"$exists": True}},
             ),
         ],
+        # Collation (en, strength 2) also equated distinct addresses: replaced by email_unique.
+        retired_indexes=("email_ci_unique",),
     ),
     CollectionSpec(
         REFRESH_TOKEN_FAMILIES,
@@ -207,6 +209,8 @@ def _index_signature(doc: Mapping[str, Any]) -> dict[str, Any]:
 
 
 async def apply_schema(db: AsyncDatabase[Document]) -> None:
+    """Idempotent. An index whose definition changed is dropped and rebuilt; indexes not
+    listed in SPECS are left alone (reported by ``--check``)."""
     existing = set(await db.list_collection_names())
     for spec in SPECS:
         if spec.name in existing:
@@ -225,7 +229,17 @@ async def apply_schema(db: AsyncDatabase[Document]) -> None:
                 validationLevel="strict",
                 validationAction="error",
             )
+        current = {d["name"]: d async for d in await db[spec.name].list_indexes()}
+        for retired in spec.retired_indexes:
+            if retired in current:
+                await db[spec.name].drop_index(retired)
         if spec.indexes:
+            for model in spec.indexes:
+                name = model.document["name"]
+                if name in current and _index_signature(current[name]) != _index_signature(
+                    model.document
+                ):
+                    await db[spec.name].drop_index(name)
             await db[spec.name].create_indexes(spec.indexes)
 
 

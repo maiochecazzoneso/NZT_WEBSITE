@@ -17,8 +17,8 @@ from pymongo.errors import DuplicateKeyError
 
 from app.cookies import OAUTH_STATE_COOKIE, clear_oauth_state_cookie, set_oauth_state_cookie
 from app.db import (
-    EMAIL_COLLATION,
     PROVIDER_GOOGLE,
+    TAKEOVER_PENDING,
     Collections,
     Document,
     identity_document,
@@ -111,10 +111,14 @@ async def _take_over_unverified_account(
     user revocation marker (already-issued access tokens die).
 
     The first step is ONE atomic compare-and-swap on the user document (still unverified,
-    active, no Google identity): a concurrent /verify-email or Google sign-in makes it
-    fail cleanly, and a concurrent password login notices the removed password through
-    its post-session re-check (routers/auth.py). Returns the revocation marker, or None
-    when the account no longer qualifies."""
+    active, no Google identity) that also sets ``takeoverPending``: from that instant the
+    user cannot authenticate or refresh (deps.py, sessions.py), so a failure in the
+    following steps (database/Redis error, crash, cancelled request) never leaves the
+    registrant with a working session; the next Google sign-in completes the cleanup
+    (_complete_takeover). A concurrent /verify-email or Google sign-in makes the swap
+    fail cleanly; a concurrent password login or registration notices the removed
+    password through its post-session re-check (routers/auth.py). Returns the revocation
+    marker, or None when the account no longer qualifies."""
     swapped = await db.users.update_one(
         {
             "_id": user_id,
@@ -127,18 +131,28 @@ async def _take_over_unverified_account(
                 "passwordHash": None,
                 "isVerified": True,
                 "identities": [google_identity],
+                TAKEOVER_PENDING: True,
                 "updatedAt": now,
             }
         },
     )
     if swapped.modified_count == 0:
         return None
-    await invalidate_pending_tokens(db, user_id)
-    marker = await sessions.revoke_all_for_user(user_id, reason="google_takeover")
     logger.warning(
         "SECURITY: unverified local account %s taken over by a verified Google identity; "
-        "password removed and all sessions revoked",
+        "password removed, revoking all sessions",
         user_id,
+    )
+    return await _complete_takeover(db, sessions, user_id)
+
+
+async def _complete_takeover(db: Collections, sessions: SessionService, user_id: uuid.UUID) -> int:
+    """Idempotent second half of a takeover; the flag is cleared only after every step
+    succeeded (it is retried on the next Google sign-in otherwise)."""
+    await invalidate_pending_tokens(db, user_id)
+    marker = await sessions.revoke_all_for_user(user_id, reason="google_takeover")
+    await db.users.update_one(
+        {"_id": user_id, TAKEOVER_PENDING: True}, {"$unset": {TAKEOVER_PENDING: ""}}
     )
     return marker
 
@@ -149,11 +163,14 @@ async def _resolve_user(
     """Spec §5.3 account linking / pre-hijacking prevention (+ takeover, see above).
     DuplicateKeyError (concurrent sign-up / linking) is mapped to 409 by the caller."""
     linked = await db.users.find_one(
-        identity_filter(PROVIDER_GOOGLE, identity.sub), {"isActive": 1}
+        identity_filter(PROVIDER_GOOGLE, identity.sub), {"isActive": 1, TAKEOVER_PENDING: 1}
     )
     if linked is not None:
         if not linked["isActive"]:
             return _fail(403, "Account is disabled")
+        if linked.get(TAKEOVER_PENDING):  # an earlier takeover did not complete
+            marker = await _complete_takeover(db, sessions, linked["_id"])
+            return ResolvedUser(linked["_id"], revoked_marker_ms=marker)
         return ResolvedUser(linked["_id"])
 
     now = utcnow()
@@ -161,7 +178,6 @@ async def _resolve_user(
     user = await db.users.find_one(
         {"email": identity.email},
         {"isVerified": 1, "isActive": 1, "identities.provider": 1},
-        collation=EMAIL_COLLATION,
     )
     if user is None:
         new_user = user_document(
@@ -179,11 +195,11 @@ async def _resolve_user(
     if any(i["provider"] == PROVIDER_GOOGLE for i in user["identities"]):
         return _fail(409, "Account already linked to a different Google identity")
     if not user["isVerified"]:
-        marker = await _take_over_unverified_account(
+        taken_over = await _take_over_unverified_account(
             db, sessions, user["_id"], google_identity, now
         )
-        if marker is not None:
-            return ResolvedUser(user["_id"], revoked_marker_ms=marker)
+        if taken_over is not None:
+            return ResolvedUser(user["_id"], revoked_marker_ms=taken_over)
     # Verified account (or verified meanwhile): link. The filter re-checks atomically that
     # it is still active and has no Google identity; a lost race is a retryable conflict.
     linked_now = await db.users.update_one(

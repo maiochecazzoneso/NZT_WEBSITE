@@ -18,7 +18,6 @@ import uuid
 
 from app.config import Settings
 from app.db import (
-    EMAIL_COLLATION,
     PROVIDER_LOCAL,
     ROLE_CUSTOMER,
     Collections,
@@ -63,7 +62,6 @@ async def upsert_user(
             "$setOnInsert": {"_id": uuid.uuid4(), "email": email, "createdAt": now},
         },
         upsert=True,
-        collation=EMAIL_COLLATION,
     )
 
 

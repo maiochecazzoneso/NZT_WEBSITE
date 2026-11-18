@@ -13,9 +13,9 @@ import httpx
 import pytest
 from pymongo.errors import DuplicateKeyError, OperationFailure, WriteError
 
-from app.db import EMAIL_COLLATION, Collections, identity_document, identity_filter, utcnow
+from app.db import Collections, identity_document, identity_filter, utcnow
 from app.schema import SPECS, apply_schema, schema_drift
-from tests.conftest import APP_URI, MONGO_DB, create_user, make_settings, register
+from tests.conftest import APP_URI, MONGO_DB, create_user, login, make_settings, register
 from tests.helpers import DPoPKey
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,10 +95,45 @@ async def test_users_validator_requires_every_field(mongo: Collections):
         await mongo.users.update_one({"_id": doc["_id"]}, {"$set": {"role": "superuser"}})
 
 
-async def test_case_insensitive_unique_email(mongo: Collections):
-    await create_user(mongo, "A@x.com")
+async def test_unique_canonical_email(mongo: Collections, client: httpx.AsyncClient):
+    await create_user(mongo, "a@x.com")
     with pytest.raises(DuplicateKeyError):
-        await create_user(mongo, "a@X.com")
+        await create_user(mongo, "a@x.com")
+    # Every API path canonicalises (lower-case) before storing/matching.
+    assert (await register(client, DPoPKey(), email="A@X.com")).status_code == 400
+
+
+async def test_lookalike_addresses_are_distinct_accounts(client_factory: Any, mongo: Collections):
+    """Exact match on the canonical email (no ICU collation): a full-width alias is NOT
+    the victim's account (review finding: collation strength 2 equated them)."""
+    assert await register(client_factory("198.51.100.1"), DPoPKey(), email="victim@corp.com")
+    alias = "\uff56ictim@corp.com"  # full-width "v"
+    resp = await login(client_factory("198.51.100.2"), DPoPKey(), email=alias)
+    assert resp.status_code == 401
+    assert await mongo.users.count_documents({"email": "victim@corp.com"}) == 1
+
+
+async def test_changed_index_definition_is_rebuilt(mongo: Collections):
+    db = _db(mongo)
+    await mongo.users.drop_index("email_unique")
+    await mongo.users.create_index("email", name="email_unique")  # not unique any more
+    assert "users: index email_unique differs" in await schema_drift(db)
+    await apply_schema(db)
+    assert await schema_drift(db) == []
+
+
+async def test_retired_index_is_dropped(mongo: Collections):
+    """A database prepared by an earlier schema version (collation email index) is fixed
+    by apply_schema."""
+    from pymongo.collation import Collation
+
+    db = _db(mongo)
+    await mongo.users.create_index(
+        "email", name="email_ci_unique", unique=True, collation=Collation("en", strength=2)
+    )
+    assert "users: index email_ci_unique differs" in await schema_drift(db)
+    await apply_schema(db)
+    assert await schema_drift(db) == []
 
 
 async def test_external_identity_belongs_to_one_user(mongo: Collections):
@@ -134,7 +169,7 @@ async def test_app_user_is_dml_only_on_its_database():
         assert roles == [{"role": "nztApp", "db": MONGO_DB}]
         forbidden = [
             lambda: db.users.create_index("evil"),
-            lambda: db.users.drop_index("email_ci_unique"),
+            lambda: db.users.drop_index("email_unique"),
             lambda: db.users.drop(),
             lambda: db.command({"collMod": "users", "validator": {}}),
             lambda: db.create_collection("evil"),
@@ -215,7 +250,7 @@ async def test_hot_queries_use_indexes(client: httpx.AsyncClient, mongo: Collect
     await register(client, DPoPKey())
     user_id = (await mongo.users.find_one({}))["_id"]  # type: ignore[index]
     queries = [
-        (mongo.users.find({"email": "user@domain.com"}, collation=EMAIL_COLLATION), "email"),
+        (mongo.users.find({"email": "user@domain.com"}), "email"),
         (mongo.users.find(identity_filter("google", "sub")), "google identity"),
         (mongo.users.find({"_id": user_id, "isActive": True}), "authentication"),
         (mongo.families.find({"userId": user_id, "isRevoked": False}), "revoke all"),

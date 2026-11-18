@@ -39,6 +39,8 @@ _MONGO_INSECURE_TLS_OPTIONS = {
     "tlsinsecure",
     "tlsallowinvalidcertificates",
     "tlsallowinvalidhostnames",
+    "tlsdisableocspendpointcheck",
+    "tlsdisablecertificaterevocationcheck",
     "ssl_cert_reqs",
 }
 
@@ -60,7 +62,9 @@ def _mongo_uri_parts(uri: str) -> tuple[bool, dict[str, str]]:
         raise ValueError("NZT_MONGODB_URI must start with mongodb:// or mongodb+srv://")
     netloc = parts.netloc
     userinfo = netloc.rpartition("@")[0] if "@" in netloc else ""
-    options = {k.lower(): v.lower() for k, v in parse_qsl(parts.query, keep_blank_values=True)}
+    # The driver accepts both "&" and ";" as option separators.
+    query = parts.query.replace(";", "&")
+    options = {k.lower(): v.lower() for k, v in parse_qsl(query, keep_blank_values=True)}
     return bool(userinfo.partition(":")[0]), options
 
 

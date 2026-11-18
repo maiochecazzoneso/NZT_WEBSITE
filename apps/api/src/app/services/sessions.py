@@ -46,7 +46,7 @@ from datetime import timedelta
 
 from redis.asyncio import Redis
 
-from app.db import Collections, utcnow
+from app.db import NOT_TAKEOVER_PENDING, Collections, utcnow
 from app.security.tokens import AccessTokenService, hash_refresh_token, new_refresh_token
 
 _REFRESH_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
@@ -204,7 +204,11 @@ class SessionService:
         )
         if family is not None:
             user_id: uuid.UUID = family["userId"]
-            allowed: dict[str, object] = {"_id": user_id, "isActive": True}
+            allowed: dict[str, object] = {
+                "_id": user_id,
+                "isActive": True,
+                **NOT_TAKEOVER_PENDING,
+            }
             if required_role is not None:
                 allowed["role"] = required_role
             if await self._db.users.find_one(allowed, {"_id": 1}) is None:

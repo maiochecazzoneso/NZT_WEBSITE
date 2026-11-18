@@ -25,7 +25,6 @@ from typing import Any
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.asynchronous.database import AsyncDatabase
-from pymongo.collation import Collation
 
 from app.config import Settings
 
@@ -43,9 +42,16 @@ REFRESH_TOKENS = "refreshTokens"
 EMAIL_VERIFICATION_TOKENS = "emailVerificationTokens"
 DOWNLOAD_LOGS = "downloadLogs"
 
-# Collation of the unique email index (case-insensitive, like the old lower(email) index).
-# Every lookup by email passes it so that the index is used and the match is exact.
-EMAIL_COLLATION = Collation(locale="en", strength=2)
+# Emails are stored and matched EXACTLY in their canonical form (schemas.canonical_email:
+# strip + lowercase + email-validator), like the old lower(email) index. No collation: an
+# ICU collation would also equate distinct addresses (full-width letters, "ß"/"ss"...).
+
+# A Google takeover (routers/google.py) sets this flag in the SAME atomic update that
+# removes the registrant's credentials and clears it only once every session is revoked:
+# while it is set the user cannot authenticate or refresh, so a partial failure never
+# leaves the registrant with a working session.
+TAKEOVER_PENDING = "takeoverPending"
+NOT_TAKEOVER_PENDING: dict[str, Any] = {TAKEOVER_PENDING: {"$exists": False}}
 
 ROLE_CUSTOMER = "customer"
 ROLE_ADMIN = "admin"
