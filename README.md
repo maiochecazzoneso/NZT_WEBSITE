@@ -53,7 +53,7 @@ su Cloudflare, Railway, DNS e GitHub sono elencate nella checklist del documento
 
 Il repo è un workspace pnpm: la Home è nella radice, l'Area Clienti è in `apps/portal` (frontend), `apps/api` (backend FastAPI) e `packages/ui` (design system condiviso). Il pulsante "Area Clienti" della Home porta a `/accedi` del portale (URL configurabile con `PUBLIC_CLIENT_AREA_URL` in build).
 
-Un solo comando builda e avvia tutto (PostgreSQL, Redis, migrazioni, API, portale, Home):
+Un solo comando builda e avvia tutto (PostgreSQL, Redis, API con migrazioni all'avvio, portale, Home):
 
 ```bash
 docker compose up --build
@@ -61,7 +61,7 @@ docker compose up --build
 
 - Home: http://localhost:4321 · Portale: http://localhost:8080 · API: http://localhost:8000/docs
 - Le email di verifica sono nei log: `docker compose logs -f api`. Google OAuth non è configurato. Chiavi Turnstile di test.
-- Login di prova: `admin@example.com` / `admin` (l'email deve essere valida, quindi non basta "admin"). Creato dal servizio `seed`, solo stack locale.
+- Login di prova: `admin@example.com` / `admin` (l'email deve essere valida, quindi non basta "admin"). Creato all'avvio dell'API (migrazioni + seed in `apps/api/docker-entrypoint.sh`), solo stack locale.
 - Reset dei dati: `docker compose down -v`. Credenziali solo di prova.
 - Il vecchio compose di sviluppo della Home è `docker-compose.dev.yml`.
 - Script utili: `pnpm dev:portal`, `pnpm build:portal`, `pnpm test:portal`.
