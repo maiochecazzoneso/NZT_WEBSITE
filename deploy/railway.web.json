@@ -1,6 +1,6 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
-  "build": { "builder": "DOCKERFILE", "dockerfilePath": "apps/admin/Dockerfile" },
+  "build": { "builder": "DOCKERFILE", "dockerfilePath": "deploy/web.Dockerfile" },
   "deploy": {
     "healthcheckPath": "/",
     "healthcheckTimeout": 60,
