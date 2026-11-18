@@ -28,8 +28,8 @@ from app.services.storage import Product
 
 # (email, password, role)
 USERS = (
-    ("admin@example.com", "admin", "admin"),
-    ("cliente@example.com", "cliente", "customer"),
+    ("admin@example.com", os.environ.get("NZT_SEED_ADMIN_PASSWORD") or "admin", "admin"),
+    ("cliente@example.com", os.environ.get("NZT_SEED_CLIENT_PASSWORD") or "cliente", "customer"),
 )
 
 
@@ -83,8 +83,8 @@ async def main() -> int:
                     )
     finally:
         await engine.dispose()
-    for email, password, role in USERS:
-        print(f"seed_dev_users: {role:8} {email} / {password}")
+    for email, _password, role in USERS:
+        print(f"seed_dev_users: {role:8} {email}")
     return 0
 
 

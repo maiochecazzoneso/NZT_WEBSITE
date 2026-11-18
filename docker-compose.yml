@@ -54,6 +54,7 @@ services:
       NZT_DIRECT_CLIENT_CONNECTIONS: "true"
       NZT_MAIL_BACKEND: console
       NZT_BOOTSTRAP: "true"
+      NZT_SEED_DEV_USERS: "true"
       NZT_BOOTSTRAP_MIGRATIONS_URL: postgresql+asyncpg://nzt_migrator:nzt_migrator_demo@postgres:5432/nzt
     ports:
       - "8000:8000"
