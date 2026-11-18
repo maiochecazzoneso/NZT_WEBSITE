@@ -1,0 +1,19 @@
+# Immagine Docker (docker compose locale e Railway): stessi header di Caddyfile, http dietro il proxy della
+# piattaforma. Porta e API configurabili a runtime: PORT (default 80) e API_ORIGIN (origin dell'API, default
+# http://localhost:8000: deve coincidere con VITE_API_BASE_URL usato in build).
+:{$PORT:80} {
+	root * /srv/nzt-admin
+	encode zstd gzip
+
+	header {
+		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src {$API_ORIGIN:http://localhost:8000}; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types 'none'"
+		X-Robots-Tag "noindex, nofollow, noarchive"
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		-Server
+	}
+
+	try_files {path} /index.html
+	file_server
+}

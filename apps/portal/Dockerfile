@@ -16,5 +16,5 @@ RUN pnpm --filter @nzt/portal build
 
 FROM caddy:2-alpine
 COPY --from=build /repo/apps/portal/dist /srv/nzt-portal
-COPY apps/portal/deploy/Caddyfile.local /etc/caddy/Caddyfile
+COPY apps/portal/deploy/Caddyfile.container /etc/caddy/Caddyfile
 EXPOSE 80

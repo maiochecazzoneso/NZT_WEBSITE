@@ -16,5 +16,5 @@ RUN pnpm --filter @nzt/admin build
 
 FROM caddy:2-alpine
 COPY --from=build /repo/apps/admin/dist /srv/nzt-admin
-COPY apps/admin/deploy/Caddyfile.local /etc/caddy/Caddyfile
+COPY apps/admin/deploy/Caddyfile.container /etc/caddy/Caddyfile
 EXPOSE 80
