@@ -50,3 +50,14 @@ Due progetti Pages collegati al repository (branch `implementazione-area-clienti
 
 Durante la build su Pages (`CF_PAGES=1`) Vite genera `dist/_headers` dalla stessa `VITE_API_BASE_URL`
 (`renderPagesHeaders` in `csp.config.ts`): la CSP `connect-src` punta sempre all'API giusta per l'ambiente.
+
+#### Collegamento Git di Cloudflare Pages: scelta del branch
+
+La procedura guidata di Cloudflare può creare il progetto sul branch predefinito (`main`) senza farlo
+scegliere. Dopo la creazione: *Settings → Build → Branch control → Production branch* =
+`implementazione-area-clienti`. Gli altri branch vengono pubblicati come anteprime
+(`https://<branch>.<progetto>.pages.dev`): in quel caso le variabili di build vanno impostate anche
+nell'ambiente **Preview**. Senza dominio proprio l'API di test si raggiunge su
+`https://api-test-d8d23d2f.up.railway.app` (le origin `*.pages.dev` vanno aggiunte a
+`NZT_PORTAL_ORIGINS` / `NZT_ADMIN_ORIGINS`); la sessione non sopravvive al ricaricamento perché i
+domini `pages.dev` e `up.railway.app` sono siti diversi (cookie `SameSite=Strict`).
