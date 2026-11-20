@@ -25,7 +25,7 @@ from pymongo import ASCENDING, DESCENDING, IndexModel
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import OperationFailure
 
-from app.config import Settings, get_settings
+from app.config import Settings
 from app.db import (
     DOWNLOAD_LOGS,
     EMAIL_VERIFICATION_TOKENS,
@@ -289,7 +289,7 @@ def _schema_settings() -> Settings:
     from pydantic import Field, SecretStr, field_validator, model_validator
     from pydantic_settings import BaseSettings, SettingsConfigDict
 
-    from app.config import Environment, _check_mongo_db, _check_mongo_uri, _is_blank
+    from app.config import Environment, _is_blank
 
     class _SchemaOnly(BaseSettings):
         model_config = SettingsConfigDict(
@@ -315,12 +315,12 @@ def _schema_settings() -> Settings:
         @field_validator("mongodb_database")
         @classmethod
         def _v_db(cls, v: str) -> str:
-            return _check_mongo_db(v)
+            return Settings._check_mongo_db(v)
 
         @field_validator("mongodb_uri", "mongodb_migrations_uri")
         @classmethod
         def _v_uri(cls, v: SecretStr | None) -> SecretStr | None:
-            return _check_mongo_uri(v)
+            return Settings._check_mongo_uri(v)
 
         @property
         def is_production(self) -> bool:

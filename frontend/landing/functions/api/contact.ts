@@ -44,7 +44,6 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     verifyCaptcha: verifyTurnstile,
     sendEmail,
     log: (level, event, fields) => {
-      // eslint-disable-next-line no-console
       console[level === 'error' ? 'error' : 'log'](JSON.stringify({ level, event, ...fields }));
     },
   });

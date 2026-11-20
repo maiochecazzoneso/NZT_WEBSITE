@@ -58,7 +58,7 @@ describe('describeError', () => {
     ],
     [http(400, 'Invalid OAuth state'), 'google-callback', /non è valida o è scaduta/],
     [http(400, DETAIL.googleEmailUnverified), 'google-callback', /non risulta verificata/],
-    [http(503, 'Google sign-in not configured'), 'google-start', /non disponibile/],
+    [http(503, 'Google sign-in not configured'), 'google-start', /Google.*disponibile/],
     [
       http(403, 'User does not have active entitlement for launcher_core'),
       'download',

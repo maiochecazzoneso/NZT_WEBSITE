@@ -163,7 +163,10 @@ async def admin_refresh(
     "/auth/logout",
     status_code=204,
     response_class=Response,
-    responses={401: {"model": ErrorResponse, "description": "Missing cookie / key mismatch"}, **_429},
+    responses={
+        401: {"model": ErrorResponse, "description": "Missing cookie / key mismatch"},
+        **_429,
+    },
     dependencies=[Depends(_rl_logout)],
 )
 async def admin_logout(

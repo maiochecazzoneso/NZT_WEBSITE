@@ -322,7 +322,10 @@ class Settings(BaseSettings):
             raise ValueError("production requires a valid redis:// or rediss:// NZT_REDIS_URL")
         if not redis_parts.password:
             raise ValueError("production requires a password in NZT_REDIS_URL")
-        if redis_parts.scheme != "rediss" and not redis_parts.hostname.endswith(".railway.internal"):
+        if (
+            redis_parts.scheme != "rediss"
+            and not redis_parts.hostname.endswith(".railway.internal")
+        ):
             raise ValueError("production requires rediss:// for external NZT_REDIS_URL")
         storage = urlsplit(self.storage_endpoint_url)
         if storage.scheme != "https" or not storage.hostname:

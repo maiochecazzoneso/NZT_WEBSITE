@@ -238,7 +238,7 @@ class SessionService:
             if required_role is not None:
                 allowed["role"] = required_role
             if await self._db.users.find_one(allowed, {"_id": 1}) is None:
-                # Roll back currentTokenHash so a retry by a second tab isn't misclassified as reuse.
+                # Roll back currentTokenHash so a retry isn't misclassified as reuse.
                 await self._db.families.update_one(
                     {"_id": ref.family_id, "currentTokenHash": new_hash},
                     {

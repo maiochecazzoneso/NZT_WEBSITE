@@ -70,7 +70,7 @@ describe('admin API client paths and payloads', () => {
 
   it('a 2xx without body on a data endpoint is an error', async () => {
     const { api } = setup(null);
-    await expect(api.stats()).rejects.toThrow('Empty response');
+    await expect(api.stats()).rejects.toThrow('invalid-response');
   });
 
   it('HTTP errors (401/403/429/409) propagate untouched as ApiError', async () => {

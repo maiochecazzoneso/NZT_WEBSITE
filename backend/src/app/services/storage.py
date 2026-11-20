@@ -114,7 +114,9 @@ class Presigner:
             )
         )
         signing_key = _sigv4_signing_key(self._secret_key, date_stamp, self._region, "s3")
-        signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+        signature = hmac.new(
+            signing_key, string_to_sign.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
         return (
             f"{self._endpoint.scheme}://{host}{canonical_uri}"
             f"?{canonical_query}&X-Amz-Signature={signature}"
