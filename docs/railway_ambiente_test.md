@@ -91,6 +91,17 @@ Pages dell'ambiente (creati al primo giro); il sito pubblica anche la Pages Func
 Gli indirizzi finali compaiono nel riepilogo di ogni esecuzione (scheda *Actions*). Si può rilanciare a
 mano da *Actions → Deploy frontend → Run workflow*.
 
+Indirizzi senza dominio proprio:
+
+| | Test | Produzione |
+|---|---|---|
+| API | `https://api-test-d8d23d2f.up.railway.app` | `https://api-production-c95c9645.up.railway.app` |
+| Sito | `https://nzt-sito-test.pages.dev` | `https://nzt-sito.pages.dev` |
+| Portale | `https://nzt-portal-test.pages.dev` | `https://nzt-portal.pages.dev` |
+| Admin | `https://nzt-admin-test.pages.dev` | `https://nzt-admin.pages.dev` |
+
+Le origin di portale e admin sono in `NZT_PORTAL_ORIGINS` / `NZT_ADMIN_ORIGINS` dell'API di ciascun ambiente.
+
 Configurazione una tantum su GitHub (*Settings → Secrets and variables → Actions*):
 - segreti `CLOUDFLARE_API_TOKEN` (permesso *Account → Cloudflare Pages → Edit*) e `CLOUDFLARE_ACCOUNT_ID`;
 - variabili `PROD_API_BASE_URL`, `TEST_API_BASE_URL` (obbligatorie) e, facoltative,
