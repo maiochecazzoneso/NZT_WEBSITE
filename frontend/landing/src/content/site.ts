@@ -32,16 +32,9 @@ export const defaultDescription =
 // ---------------------------------------------------------------------------
 // Servizi selezionabili nel form (selectedServiceStore di Nano Stores)
 // ---------------------------------------------------------------------------
-export const serviceOptions = [
-  { value: 'generale', label: 'Voglio fare un’analisi generale dei flussi della mia azienda' },
-  { value: 'software-custom', label: 'Sviluppo Software su Misura / Web App Proprietaria' },
-  { value: 'automazione-ai', label: 'Automazione Uffici & Intelligenza Artificiale nei Processi' },
-  { value: 'consulenza-ai', label: 'Audit Tecnico & Studio di Fattibilità AI' },
-  { value: 'nzt-enterprise', label: 'Prodotto: NZT Enterprise (Ricerca Documentale AI in Locale)' },
-  { value: 'voicebot-b2b', label: 'Prodotto: Pnote / Soluzioni Voicebot AI Telefoniche' },
-] as const;
-
-export type ServiceId = (typeof serviceOptions)[number]['value'];
+// Opzioni del modulo contatti: in un modulo a parte perché le usa anche la Pages Function
+// (functions/api/contact.ts), dove import.meta.env non esiste.
+export { serviceOptions, type ServiceId } from './service-options';
 
 // ---------------------------------------------------------------------------
 // Hero: solo H1 + 2 CTA (le particelle compongono la scritta di transizione)

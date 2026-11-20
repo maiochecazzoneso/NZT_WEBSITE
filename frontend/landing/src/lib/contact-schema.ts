@@ -5,7 +5,7 @@
 // - solo scalari tipizzati, con lunghezza massima
 // - niente caratteri di controllo nei campi a riga singola (finiscono nell'oggetto dell'email)
 import { z } from '@/lib/zod';
-import { serviceOptions, type ServiceId } from '@/content/site';
+import { serviceOptions, type ServiceId } from '@/content/service-options';
 
 export const serviceValues = serviceOptions.map((option) => option.value) as [
   ServiceId,
