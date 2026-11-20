@@ -4,7 +4,7 @@
 # L'immagine base è fissata per digest: la aggiorna Dependabot (.github/dependabot.yml).
 
 # ----------------- Build Stage -----------------
-FROM node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS builder
+FROM node:26-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS builder
 
 ENV CI=true \
     COREPACK_ENABLE_DOWNLOAD_PROMPT=0
@@ -41,7 +41,7 @@ RUN pnpm --filter nzt-solutions-web build
 # ----------------- Final Minimal Stage -----------------
 # Alpine: a runtime non servono moduli nativi né librerie di sistema, quindi si usa la base con la
 # superficie più piccola (molte meno vulnerabilità di sistema rispetto a Debian slim).
-FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5
 
 ENV NODE_ENV=production \
     NODE_OPTIONS="--max-old-space-size=128 --disable-proto=throw" \
