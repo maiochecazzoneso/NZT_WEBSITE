@@ -1,5 +1,5 @@
 # API FastAPI (Python 3.12 + uv). Contesto di build: backend.
-FROM python:3.12-slim AS builder
+FROM python:3.15-slim AS builder
 COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /usr/local/bin/uv
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
@@ -8,7 +8,7 @@ RUN uv sync --frozen --no-dev --no-install-project --no-cache
 COPY src ./src
 RUN uv sync --frozen --no-dev --no-cache
 
-FROM python:3.12-slim
+FROM python:3.15-slim
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
