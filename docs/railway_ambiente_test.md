@@ -62,15 +62,27 @@ nell'ambiente **Preview**. Senza dominio proprio l'API di test si raggiunge su
 `NZT_PORTAL_ORIGINS` / `NZT_ADMIN_ORIGINS`); la sessione non sopravvive al ricaricamento perché i
 domini `pages.dev` e `up.railway.app` sono siti diversi (cookie `SameSite=Strict`).
 
-### Pubblicazione automatica dei frontend (GitHub Actions → Cloudflare Pages)
+### Flusso di lavoro: `main` è l'unica versione online
 
-`.github/workflows/deploy-frontend.yml`: a ogni push su `implementazione-area-clienti` che tocca
-`frontend/**` compila e pubblica i tre siti sui progetti Pages `nzt-sito-test`, `nzt-portal-test`,
-`nzt-admin-test` (creati al primo giro). Il sito pubblica anche la Pages Function `POST /api/contact`.
-Gli indirizzi finali compaiono nel riepilogo di ogni esecuzione (scheda *Actions*).
+| Branch | Cosa succede |
+|---|---|
+| `main` (merge o push) | Railway ridistribuisce l'API (se cambia `backend/`), l'API applica lo schema MongoDB all'avvio, GitHub Actions pubblica sito, portale e admin su Cloudflare Pages (se cambia `frontend/`) |
+| qualsiasi altro branch | nulla online: si prova in locale con `docker compose up --build` |
+
+Stack locale (dalla radice del repo, serve Docker): sito `http://localhost:4321`, portale
+`http://localhost:8080`, admin `http://localhost:8081`, API `http://localhost:8000`, con MongoDB e
+Redis locali e utenti di prova `admin@example.com` / `admin`, `cliente@example.com` / `cliente`.
+Per lavorare su una sola parte con ricaricamento automatico: `pnpm dev`, `pnpm dev:portal`, `pnpm dev:admin`.
+
+#### Pubblicazione dei frontend (GitHub Actions → Cloudflare Pages)
+
+`.github/workflows/deploy-frontend.yml` (solo da `main`) compila e pubblica i progetti Pages
+`nzt-sito`, `nzt-portal`, `nzt-admin` (creati al primo giro); il sito pubblica anche la Pages
+Function `POST /api/contact`. Gli indirizzi finali compaiono nel riepilogo di ogni esecuzione
+(scheda *Actions*). Si può rilanciare a mano da *Actions → Deploy frontend → Run workflow*.
 
 Configurazione una tantum su GitHub (*Settings → Secrets and variables → Actions*):
-`CLOUDFLARE_API_TOKEN` (permesso *Account → Cloudflare Pages → Edit*) e `CLOUDFLARE_ACCOUNT_ID`.
-Facoltative (scheda *Variables*): `TEST_API_BASE_URL`, `TEST_TURNSTILE_SITE_KEY`.
-Segreti del modulo contatti (`TURNSTILE_SECRET_KEY`, `RESEND_API_KEY`, …): nel progetto Pages
-`nzt-sito-test` → *Settings → Variables and Secrets*.
+segreti `CLOUDFLARE_API_TOKEN` (permesso *Account → Cloudflare Pages → Edit*) e `CLOUDFLARE_ACCOUNT_ID`;
+variabili facoltative `API_BASE_URL`, `CLIENT_AREA_URL`, `TURNSTILE_SITE_KEY`.
+Segreti del modulo contatti (`TURNSTILE_SECRET_KEY`, `RESEND_API_KEY`, …): progetto Pages `nzt-sito`
+→ *Settings → Variables and Secrets*.

@@ -68,6 +68,10 @@ services:
       NZT_BOOTSTRAP: "true"
       NZT_SEED_DEV_USERS: "true"
       NZT_BOOTSTRAP_MIGRATIONS_URI: mongodb://nzt_migrator:nzt_migrator_demo@mongo:27017/?authSource=nzt
+    # Lo script degli utenti di prova è escluso dall'immagine (non deve finire in produzione):
+    # in locale lo si monta in sola lettura, così NZT_SEED_DEV_USERS=true funziona.
+    volumes:
+      - ./backend/scripts/seed_dev_users.py:/app/scripts/seed_dev_users.py:ro
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

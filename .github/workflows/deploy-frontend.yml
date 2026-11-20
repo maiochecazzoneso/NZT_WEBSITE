@@ -1,15 +1,16 @@
-# Pubblicazione automatica dei tre frontend su Cloudflare Pages a ogni push.
-#   implementazione-area-clienti -> progetti *-test, API di test (Railway, ambiente test)
-#   (main -> produzione: da aggiungere quando ci saranno dominio e progetti di produzione)
+# Pubblicazione automatica dei tre frontend su Cloudflare Pages SOLO da main (merge/push su main).
+# Gli altri branch non pubblicano nulla: si provano in locale (docker compose up --build).
+# Finché non c'è il dominio, main punta all'API dell'ambiente Railway online (variabile API_BASE_URL).
 # Segreti richiesti nel repository (Settings -> Secrets and variables -> Actions):
 #   CLOUDFLARE_API_TOKEN  (permesso: Account -> Cloudflare Pages -> Edit)
 #   CLOUDFLARE_ACCOUNT_ID
-# Variabile facoltativa (stessa pagina, scheda Variables): TEST_API_BASE_URL.
+# Variabili facoltative (stessa pagina, scheda Variables): API_BASE_URL, CLIENT_AREA_URL,
+# TURNSTILE_SITE_KEY.
 name: Deploy frontend
 
 on:
   push:
-    branches: [implementazione-area-clienti]
+    branches: [main]
     paths:
       - 'frontend/**'
       - 'pnpm-lock.yaml'
@@ -26,8 +27,8 @@ concurrency:
 
 env:
   WRANGLER: pnpm dlx wrangler@4.165.0
-  PRODUCTION_BRANCH: implementazione-area-clienti
-  API_BASE_URL: ${{ vars.TEST_API_BASE_URL || 'https://api-test-d8d23d2f.up.railway.app' }}
+  PRODUCTION_BRANCH: main
+  API_BASE_URL: ${{ vars.API_BASE_URL || 'https://api-test-d8d23d2f.up.railway.app' }}
 
 jobs:
   deploy:
@@ -38,17 +39,17 @@ jobs:
       matrix:
         include:
           - app: sito
-            project: nzt-sito-test
+            project: nzt-sito
             build: pnpm build
             workdir: frontend/landing
             output: dist/client
           - app: portale
-            project: nzt-portal-test
+            project: nzt-portal
             build: pnpm build:portal
             workdir: .
             output: frontend/portal/dist
           - app: admin
-            project: nzt-admin-test
+            project: nzt-admin
             build: pnpm build:admin
             workdir: .
             output: frontend/admin/dist
@@ -80,8 +81,9 @@ jobs:
           # portale/admin: origin dell'API nel bundle e nella CSP di dist/_headers
           VITE_API_BASE_URL: ${{ env.API_BASE_URL }}
           NZT_EMIT_PAGES_HEADERS: '1'
-          # sito: chiave pubblica Turnstile (default: chiave di test ufficiale Cloudflare)
-          PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.TEST_TURNSTILE_SITE_KEY || '1x00000000000000000000AA' }}
+          # sito: link "Area clienti" e chiave pubblica Turnstile (default: chiave di test Cloudflare)
+          PUBLIC_CLIENT_AREA_URL: ${{ vars.CLIENT_AREA_URL }}
+          PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY || '1x00000000000000000000AA' }}
         run: ${{ matrix.build }}
       - name: Crea il progetto Pages se non esiste
         run: |
