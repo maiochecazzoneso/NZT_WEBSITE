@@ -550,7 +550,7 @@ def test_prod_requires_explicit_infrastructure_urls(
         Settings(_env_file=None, **kwargs)  # type: ignore[call-arg]
     # The same value supplied through the environment counts as explicit.
     value = {"NZT_MONGODB_URI": PROD_MONGO_URI, "NZT_MONGODB_DATABASE": "nzt"}
-    monkeypatch.setenv(env, value.get(env, "redis://h:1/0"))
+    monkeypatch.setenv(env, value.get(env, "rediss://default:x@redis.internal:6379/0"))
     assert Settings(_env_file=None, **kwargs).is_production  # type: ignore[call-arg]
 
 

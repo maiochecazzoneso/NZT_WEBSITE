@@ -101,6 +101,7 @@ class AuthenticatedUser:
     email: str
     jkt: str
     role: str
+    aud: str
     is_verified: bool
     entitlements: tuple[Entitlement, ...] = ()
 
@@ -158,6 +159,7 @@ async def get_current_user(
         email=doc["email"],
         jkt=claims.jkt,
         role=doc["role"],
+        aud=claims.aud,
         is_verified=doc["isVerified"],
         entitlements=_entitlements(doc.get("entitlements")),
     )
@@ -191,9 +193,9 @@ def require_entitlement(
 
 
 async def get_current_admin(user: CurrentUser) -> AuthenticatedUser:
-    """Admin-only resources: valid DPoP-bound token AND role == 'admin' read from the
-    database on every request (a demoted/disabled admin loses access immediately)."""
-    if user.role != ROLE_ADMIN:
+    """Admin-only resources: valid DPoP-bound admin-realm token AND role == 'admin' read
+    from the database on every request (a demoted/disabled admin loses access immediately)."""
+    if user.role != ROLE_ADMIN or user.aud != "admin":
         raise HTTPException(status_code=403, detail="Administrator access required")
     return user
 

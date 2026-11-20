@@ -59,7 +59,9 @@ class RateLimit:
 LOGIN_PER_IP: Final = RateLimit("login:ip", 5, 60)
 LOGIN_PER_EMAIL: Final = RateLimit("login:email", 5, 60)
 REGISTER_PER_IP: Final = RateLimit("register:ip", 3, 3600)
+REFRESH_PER_IP: Final = RateLimit("refresh:ip", 60, 60)
 REFRESH_PER_FAMILY: Final = RateLimit("refresh:family", 30, 60)
+LOGOUT_PER_IP: Final = RateLimit("logout:ip", 30, 60)
 DOWNLOADS_PER_USER: Final = RateLimit("downloads:user", 10, 3600)
 # Addition to spec §9.2 (review L6): Google OIDC endpoints, per client IP, same sliding
 # window and fail-closed behaviour. authorize is cheap (no egress) but sets a cookie;

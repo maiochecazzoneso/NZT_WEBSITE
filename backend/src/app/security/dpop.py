@@ -35,9 +35,9 @@ _PRIVATE_JWK_MEMBERS = frozenset({"d", "p", "q", "dp", "dq", "qi", "oth", "k"})
 _MAX_PROOF_LEN = 4096
 _MAX_JTI_LEN = 256
 _P256_COORD_B64_LEN = 43
-# NumericDate sanity range for iat: [1970, 2^31) seconds. Rejects absurd values (incl.
+# NumericDate sanity range for iat: [1970, 2^35) seconds. Rejects absurd values (incl.
 # huge integers whose float() conversion would raise OverflowError) before any math.
-_MAX_NUMERIC_DATE = 2**31
+_MAX_NUMERIC_DATE = 2**35
 
 
 class DPoPError(Exception):
@@ -75,10 +75,14 @@ def _normalize_url(url: str) -> tuple[str, str, int, str]:
     scheme = parts.scheme.lower()
     if scheme not in {"http", "https"} or not parts.hostname:
         raise DPoPError("htu is not an absolute http(s) URI")
+    if parts.username is not None or parts.password is not None:
+        raise DPoPError("htu must not contain userinfo")
     try:
-        port = parts.port or (443 if scheme == "https" else 80)
+        port = parts.port if parts.port is not None else (443 if scheme == "https" else 80)
     except ValueError as exc:
         raise DPoPError("htu has an invalid port") from exc
+    if port == 0:
+        raise DPoPError("htu has an invalid port")
     return scheme, parts.hostname.lower(), port, parts.path or "/"
 
 
@@ -178,13 +182,15 @@ class DPoPValidator:
             ath = claims.get("ath")
             if not isinstance(ath, str):
                 raise DPoPError("missing ath")
-            if not hmac.compare_digest(ath, sha256_b64url(access_token)):
+            if not hmac.compare_digest(
+                ath.encode("utf-8"), sha256_b64url(access_token).encode("ascii")
+            ):
                 raise DPoPError("ath mismatch")
 
         jkt = jwk_thumbprint(public_jwk)
         # Replay protection (global jti namespace, scoped by key to avoid cross-client DoS).
         replay_key = "dpop:jti:" + hashlib.sha256(f"{jkt}:{jti}".encode()).hexdigest()
-        stored = await self._redis.set(replay_key, "1", nx=True, ex=self._leeway * 2 + 5)
+        stored = await self._redis.set(replay_key, "1", nx=True, ex=self._leeway * 2 + 30)
         if not stored:
             raise DPoPError("DPoP proof replayed")
         return DPoPProof(jkt=jkt, jti=jti, iat=int(iat_value), jwk=public_jwk)

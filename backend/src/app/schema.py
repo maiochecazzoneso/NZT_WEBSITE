@@ -145,7 +145,8 @@ SPECS: tuple[CollectionSpec, ...] = (
                 "expiresAt": _DATE,
                 "createdAt": _DATE,
                 "updatedAt": _DATE,
-            }
+            },
+            optional={"realm": {"enum": ["portal", "admin"]}},
         ),
         [
             IndexModel([("currentTokenHash", ASCENDING)], name="current_token_unique", unique=True),
@@ -282,6 +283,68 @@ def migrations_uri(settings: Settings) -> str:
     return settings.mongodb_uri.get_secret_value()
 
 
+def _schema_settings() -> Settings:
+    """Load only MongoDB settings for ``python -m app.schema`` so production schema runs
+    never require API runtime secrets (access-token keys, Google, Resend, R2, Redis)."""
+    from pydantic import Field, SecretStr, field_validator, model_validator
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+
+    from app.config import Environment, _check_mongo_db, _check_mongo_uri, _is_blank
+
+    class _SchemaOnly(BaseSettings):
+        model_config = SettingsConfigDict(
+            env_prefix="NZT_",
+            env_file=".env",
+            env_file_encoding="utf-8",
+            extra="ignore",
+            case_sensitive=False,
+            env_ignore_empty=True,
+        )
+        environment: Environment = Environment.DEVELOPMENT
+        mongodb_uri: SecretStr = SecretStr(
+            "mongodb://nzt_app:nzt_app_test@127.0.0.1:57017/?authSource=nzt_test&directConnection=true"
+        )
+        mongodb_migrations_uri: SecretStr | None = None
+        mongodb_database: str = "nzt_test"
+        mongodb_tls: bool | None = None
+        mongodb_tls_ca_file: str | None = None
+        mongodb_max_pool_size: int = Field(default=2, ge=1, le=100)
+        mongodb_timeout_ms: int = Field(default=15_000, ge=1_000, le=60_000)
+        mongodb_server_selection_timeout_ms: int = Field(default=5_000, ge=500, le=30_000)
+
+        @field_validator("mongodb_database")
+        @classmethod
+        def _v_db(cls, v: str) -> str:
+            return _check_mongo_db(v)
+
+        @field_validator("mongodb_uri", "mongodb_migrations_uri")
+        @classmethod
+        def _v_uri(cls, v: SecretStr | None) -> SecretStr | None:
+            return _check_mongo_uri(v)
+
+        @property
+        def is_production(self) -> bool:
+            return self.environment == Environment.PRODUCTION
+
+        @property
+        def effective_mongodb_tls(self) -> bool:
+            return self.mongodb_tls if self.mongodb_tls is not None else self.is_production
+
+        @model_validator(mode="after")
+        def _prod_guard(self) -> _SchemaOnly:
+            if self.is_production:
+                if _is_blank(self.mongodb_migrations_uri):
+                    raise ValueError("production schema step requires NZT_MONGODB_MIGRATIONS_URI")
+                if "mongodb_database" not in self.model_fields_set:
+                    raise ValueError("production schema step requires NZT_MONGODB_DATABASE")
+                Settings._check_production_mongo_uri(
+                    self, self.mongodb_migrations_uri, "NZT_MONGODB_MIGRATIONS_URI"  # type: ignore[arg-type]
+                )
+            return self
+
+    return _SchemaOnly()  # type: ignore[return-value]
+
+
 async def run(settings: Settings, *, check: bool) -> int:
     client = create_client(settings, uri=migrations_uri(settings))
     try:
@@ -311,7 +374,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.schema")
     parser.add_argument("--check", action="store_true", help="only report drift")
     args = parser.parse_args(argv)
-    return asyncio.run(run(get_settings(), check=args.check))
+    return asyncio.run(run(_schema_settings(), check=args.check))
 
 
 if __name__ == "__main__":

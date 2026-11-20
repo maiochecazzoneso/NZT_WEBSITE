@@ -69,7 +69,7 @@ services:
       NZT_SEED_DEV_USERS: "true"
       NZT_BOOTSTRAP_MIGRATIONS_URI: mongodb://nzt_migrator:nzt_migrator_demo@mongo:27017/?authSource=nzt
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       mongo-init: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -81,7 +81,7 @@ services:
       args:
         VITE_API_BASE_URL: http://localhost:8000
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
 
   admin:
     build:
@@ -90,7 +90,7 @@ services:
       args:
         VITE_API_BASE_URL: http://localhost:8000
     ports:
-      - "8081:80"
+      - "127.0.0.1:8081:80"
 
   landing:
     build:
@@ -102,7 +102,7 @@ services:
     environment:
       TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA   # chiave di TEST Cloudflare
     ports:
-      - "4321:8080"
+      - "127.0.0.1:4321:8080"
 
 volumes:
   mongodata:

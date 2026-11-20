@@ -21,9 +21,11 @@ COPY frontend/landing/package.json frontend/landing/
 COPY frontend/portal/package.json frontend/portal/
 COPY frontend/admin/package.json frontend/admin/
 COPY frontend/ui/package.json frontend/ui/
-RUN pnpm install --frozen-lockfile --filter nzt-solutions-web...
+RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile --filter nzt-solutions-web...
 
-COPY . .
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY frontend/landing frontend/landing
 
 # Unica variabile necessaria al build: è pubblica per natura (finisce nel bundle del browser).
 # I segreti (TURNSTILE_SECRET_KEY, RESEND_API_KEY, ORIGIN_VERIFY_SECRET) NON vanno dichiarati qui:
@@ -42,6 +44,7 @@ RUN pnpm --filter nzt-solutions-web build
 FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
 
 ENV NODE_ENV=production \
+    NODE_OPTIONS="--max-old-space-size=128 --disable-proto=throw" \
     HOST=0.0.0.0 \
     PORT=8080
 
@@ -68,7 +71,7 @@ USER appuser
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 8080) + '/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+  CMD ["wget", "-q", "-T", "3", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
 
 # Forma exec: Node riceve direttamente SIGTERM e chiude le connessioni in modo ordinato
 CMD ["node", "server/index.mjs"]

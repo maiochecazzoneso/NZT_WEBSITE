@@ -203,7 +203,11 @@ export function ContactForm({ defaultService }: ContactFormProps) {
           </a>
           <button
             type="button"
-            onClick={() => setOutcome(null)}
+            onClick={() => {
+              setOutcome(null);
+              setTurnstileFailed(false);
+              setFormError(null);
+            }}
             className={buttonVariants({ variant: 'ghost', size: 'md' })}
           >
             Modifica i dati
@@ -230,7 +234,9 @@ export function ContactForm({ defaultService }: ContactFormProps) {
           name="website"
           type="text"
           tabIndex={-1}
-          autoComplete="off"
+          autoComplete="new-password"
+          data-1p-ignore="true"
+          data-lpignore="true"
         />
       </div>
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">

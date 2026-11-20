@@ -28,12 +28,12 @@ export function resolveClientIp({ headers, socketAddress, originVerified, trustR
   // 1. Passata da Cloudflare (verificato dal segreto): CF-Connecting-IP è sempre riscritto da Cloudflare
   if (originVerified) {
     const fromCloudflare = asIp(headers['cf-connecting-ip']);
-    if (fromCloudflare) return fromCloudflare;
+    if (fromCloudflare) return normalizeIp(fromCloudflare);
   }
   // 2. Dietro l'edge di Railway: X-Real-IP è impostato dal proxy di Railway con l'IP del peer
   if (trustRailwayProxy) {
     const fromRailway = asIp(headers['x-real-ip']);
-    if (fromRailway) return fromRailway;
+    if (fromRailway) return normalizeIp(fromRailway);
   }
   // 3. Nessun proxy fidato: vale solo l'indirizzo della connessione TCP
   return normalizeIp(asIp(socketAddress) ?? 'unknown');
@@ -44,7 +44,10 @@ export function resolveClientIp({ headers, socketAddress, originVerified, trustR
  * @param {string} ip
  */
 export function normalizeIp(ip) {
-  return ip.startsWith('::ffff:') && isIP(ip.slice(7)) === 4 ? ip.slice(7) : ip;
+  const lower = ip.toLowerCase();
+  if (lower.startsWith('::ffff:') && isIP(lower.slice(7)) === 4) return lower.slice(7);
+  if (lower.startsWith('0:0:0:0:0:ffff:') && isIP(lower.slice(15)) === 4) return lower.slice(15);
+  return ip;
 }
 
 /**

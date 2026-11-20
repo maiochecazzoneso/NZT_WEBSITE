@@ -20,6 +20,10 @@ export default defineConfig({
   security: {
     // Rifiuta i POST/PUT/PATCH/DELETE con `Origin` diverso dall'host (anti-CSRF a livello di framework)
     checkOrigin: true,
+    allowedDomains: [
+      { hostname: 'nztsolutions.it', protocol: 'https' },
+      { hostname: 'www.nztsolutions.it', protocol: 'https' },
+    ],
   },
   integrations: [
     react(),
@@ -76,6 +80,6 @@ export default defineConfig({
   },
   prefetch: {
     prefetchAll: true,
-    defaultStrategy: 'viewport',
+    defaultStrategy: 'hover',
   },
 });

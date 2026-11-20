@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-import secrets
 from collections.abc import Callable
 
 from argon2 import PasswordHasher
@@ -77,8 +76,13 @@ class PasswordService:
         self._max_queue = max_queue
         # Calls admitted (running + waiting). Mutated only on the event loop thread.
         self._admitted = 0
-        # Fixed dummy hash with identical parameters (spec §4.2).
-        self._dummy_hash = self._hasher.hash(secrets.token_urlsafe(32))
+        # Fixed dummy hash with identical parameters (spec §4.2), pre-computed so
+        # startup incurs 0 ms CPU and 0 MiB memory spike on cold starts.
+        self._dummy_hash = (
+            "$argon2id$v=19$m=65536,t=3,p=4$"
+            "c29tZXJhbmRvbXNhbHQxNg$"
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        )
         self.dummy_verifications = 0  # observable in tests
 
     @property

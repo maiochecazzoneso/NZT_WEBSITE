@@ -19,9 +19,16 @@ from app.cookies import (
 from app.db import ROLE_ADMIN
 from app.deps import CurrentAdmin, DPoPProofDep, ServicesDep, dpop_unauthorized
 from app.errors import www_authenticate_dpop
-from app.ratelimit import LOGIN_PER_EMAIL, LOGIN_PER_IP, REFRESH_PER_FAMILY
+from app.ratelimit import (
+    LOGIN_PER_EMAIL,
+    LOGIN_PER_IP,
+    LOGOUT_PER_IP,
+    REFRESH_PER_FAMILY,
+    REFRESH_PER_IP,
+)
 from app.routers.auth import password_login
 from app.schemas import ErrorResponse, LoginRequest, TokenResponse
+from app.security.tokens import REALM_ADMIN
 from app.services.sessions import IssuedSession, RefreshError, RefreshOutcome, TokenRef
 
 logger = logging.getLogger(__name__)
@@ -59,14 +66,29 @@ def _error(
 
 async def _rl_login_ip(request: Request, services: ServicesDep) -> None:
     await services.rate_limiter.hit(
-        LOGIN_PER_IP, "admin:" + services.client_ip.for_request(request)
+        LOGIN_PER_IP, "admin:" + services.client_ip.for_rate_limit(request)
+    )
+
+
+async def _rl_refresh_ip(request: Request, services: ServicesDep) -> None:
+    await services.rate_limiter.hit(
+        REFRESH_PER_IP, "admin:" + services.client_ip.for_rate_limit(request)
+    )
+
+
+async def _rl_logout(request: Request, services: ServicesDep) -> None:
+    await services.rate_limiter.hit(
+        LOGOUT_PER_IP, "admin:" + services.client_ip.for_rate_limit(request)
     )
 
 
 async def presented_admin_refresh_token(
-    services: ServicesDep, refresh: AdminRefreshCookie = None
+    services: ServicesDep,
+    _: Annotated[None, Depends(_rl_refresh_ip)],
+    refresh: AdminRefreshCookie = None,
 ) -> TokenRef | None:
-    """Looked up once per request: FastAPI caches it for the rate limit AND the handler."""
+    """Looked up once per request: FastAPI caches it for the rate limit AND the handler.
+    _rl_refresh_ip runs first so rate-limited IPs cannot hit MongoDB."""
     return await services.sessions.lookup(refresh)
 
 
@@ -77,7 +99,7 @@ async def _rl_refresh(request: Request, services: ServicesDep, ref: AdminRefresh
     identifier = (
         f"family:{ref.family_id}"
         if ref is not None
-        else f"admin-anon:{services.client_ip.for_request(request)}"
+        else f"admin-anon:{services.client_ip.for_rate_limit(request)}"
     )
     await services.rate_limiter.hit(REFRESH_PER_FAMILY, identifier)
 
@@ -93,7 +115,8 @@ async def admin_login(
     proof: DPoPProofDep,
     payload: Annotated[LoginRequest, Body()],
 ) -> JSONResponse:
-    await services.rate_limiter.hit(LOGIN_PER_EMAIL, "admin:" + payload.email)
+    # Share LOGIN_PER_EMAIL with customer login so admin passwords don't get 2x brute-force budget.
+    await services.rate_limiter.hit(LOGIN_PER_EMAIL, payload.email)
     # Same Argon2id work and same message for "not an admin" as for "wrong password".
     issued = await password_login(services, payload, jkt=proof.jkt, admin=True)
     if issued is None:
@@ -119,7 +142,9 @@ async def admin_refresh(
     try:
         # The role is re-checked inside the rotation: a demoted admin cannot keep renewing
         # the admin session (that session is revoked).
-        issued = await services.sessions.rotate(ref, jkt=proof.jkt, required_role=ROLE_ADMIN)
+        issued = await services.sessions.rotate(
+            ref, jkt=proof.jkt, realm=REALM_ADMIN, required_role=ROLE_ADMIN
+        )
     except RefreshError as exc:
         if exc.outcome is RefreshOutcome.REUSE:
             logger.warning("SECURITY: admin refresh token reuse detected; all sessions revoked")
@@ -138,7 +163,8 @@ async def admin_refresh(
     "/auth/logout",
     status_code=204,
     response_class=Response,
-    responses={401: {"model": ErrorResponse, "description": "Missing cookie / key mismatch"}},
+    responses={401: {"model": ErrorResponse, "description": "Missing cookie / key mismatch"}, **_429},
+    dependencies=[Depends(_rl_logout)],
 )
 async def admin_logout(
     services: ServicesDep,
@@ -148,7 +174,7 @@ async def admin_logout(
 ) -> StarletteResponse:
     if not refresh_token:
         return _error(401, "Missing refresh token")
-    if not await services.sessions.logout(ref, jkt=proof.jkt):
+    if not await services.sessions.logout(ref, jkt=proof.jkt, realm=REALM_ADMIN):
         raise dpop_unauthorized("DPoP key does not match refresh token binding")
     response = Response(status_code=204)
     clear_admin_refresh_cookie(response)

@@ -726,7 +726,16 @@ export default function HeroPillScrollytelling() {
           frameloop={shouldPause ? 'demand' : 'always'}
           camera={{ position: [0, 0, 4.2], fov: 35 }}
           gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
-          onCreated={() => setIsReady(true)}
+          onCreated={({ gl }) => {
+            setIsReady(true);
+            gl.domElement.addEventListener('webglcontextlost', (event) => {
+              event.preventDefault();
+              setIsReady(false);
+            });
+            gl.domElement.addEventListener('webglcontextrestored', () => {
+              setIsReady(true);
+            });
+          }}
         >
           <ambientLight intensity={0.45} color="#ffffff" />
           <directionalLight position={[-4, 5, 3]} intensity={2.4} color="#ffffff" />
@@ -750,6 +759,7 @@ export default function HeroPillScrollytelling() {
 
           <ContactShadows
             position={[0, -1.75, 0]}
+            frames={1}
             opacity={0.45}
             scale={6}
             blur={2.6}

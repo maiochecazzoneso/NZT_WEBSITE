@@ -2,7 +2,8 @@
 
 > **Progetto:** Sito Web Ufficiale & Landing Page Ad Alte Prestazioni (`nztsolutions.it`)  
 > **Modello Architetturale:** Struttura Disaccoppiata (Astro SSG + React Islands) predisposta per futura Area Clienti (`clienti.nztsolutions.it`)  
-> **Riferimento Estetico/Funzionale:** Paradigma *pnote.it* (Mockup UI interattivi nel DOM, animazioni fluide controllate, zero impatto SEO)
+> **Riferimento Estetico/Funzionale:** Paradigma *pnote.it* (Mockup UI interattivi nel DOM, animazioni fluide controllate, zero impatto SEO)  
+> **Nota di allineamento (2026-11-18):** Lo stack effettivo nel monorepo usa **pnpm 10** (`frontend/*`), **Astro 7**, **Zod 4**, `fetch` diretto verso l'API REST di Resend (senza SDK), design system condiviso in **`frontend/ui` (`@nzt/ui`)** per `portal`/`admin`, e deploy consigliato su **Cloudflare Pages** (`dist/client/_headers` + `functions/api/contact.ts`) o container Node (`frontend/landing/Dockerfile`).
 
 ---
 

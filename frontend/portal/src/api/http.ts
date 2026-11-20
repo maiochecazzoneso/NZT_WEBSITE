@@ -76,58 +76,62 @@ export const apiFetch: ApiFetcher = async <T>(request: ApiRequest): Promise<ApiR
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  let response: Response;
   try {
-    response = await fetch(url, {
-      method: request.method,
-      headers,
-      body: request.body === undefined ? null : JSON.stringify(request.body),
-      mode: 'cors',
-      credentials: request.withCredentials ? 'include' : 'omit',
-      // keepalive sulle richieste che ruotano/impostano il cookie di refresh: se la pagina viene
-      // chiusa o ricaricata a metà richiesta, il browser completa comunque la richiesta e salva il
-      // nuovo cookie, invece di perderlo (cosa che al refresh successivo presenterebbe il cookie già
-      // consumato e farebbe scattare la reuse detection, revocando tutte le sessioni).
-      keepalive: request.withCredentials === true,
-      cache: 'no-store',
-      redirect: 'error',
-      referrerPolicy: 'no-referrer',
-      signal: controller.signal,
-    });
-  } catch {
-    throw new ApiError(controller.signal.aborted ? 'timeout' : 'network');
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: request.method,
+        headers,
+        body: request.body === undefined ? null : JSON.stringify(request.body),
+        mode: 'cors',
+        credentials: request.withCredentials ? 'include' : 'omit',
+        // keepalive sulle richieste che ruotano/impostano il cookie di refresh: se la pagina viene
+        // chiusa o ricaricata a metà richiesta, il browser completa comunque la richiesta e salva il
+        // nuovo cookie, invece di perderlo (cosa che al refresh successivo presenterebbe il cookie già
+        // consumato e farebbe scattare la reuse detection, revocando tutte le sessioni).
+        keepalive: request.withCredentials === true,
+        cache: 'no-store',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer',
+        signal: controller.signal,
+      });
+    } catch {
+      throw new ApiError(controller.signal.aborted ? 'timeout' : 'network');
+    }
+
+    if (response.status === 204) return { status: 204, data: null };
+
+    let payload: unknown = null;
+    const contentType = response.headers.get('Content-Type') ?? '';
+    if (contentType.includes('application/json')) {
+      try {
+        payload = await response.json();
+      } catch {
+        if (response.ok) throw new ApiError('invalid-response', response.status);
+      }
+    } else if (response.ok) {
+      throw new ApiError('invalid-response', response.status);
+    }
+
+    if (!response.ok) {
+      const detail =
+        typeof payload === 'object' &&
+        payload !== null &&
+        typeof (payload as { detail?: unknown }).detail === 'string'
+          ? (payload as { detail: string }).detail
+          : null;
+      // Retry-After cross-origin è leggibile perché il backend lo espone (Access-Control-Expose-
+      // Headers: Retry-After, anche su 413/429/5xx). Se manca o è illeggibile vale null e la UI
+      // mostra un messaggio generico.
+      throw new ApiError(
+        'http',
+        response.status,
+        detail,
+        parseRetryAfter(response.headers.get('Retry-After')),
+      );
+    }
+    return { status: response.status, data: payload as T };
   } finally {
     clearTimeout(timer);
   }
-
-  if (response.status === 204) return { status: 204, data: null };
-
-  let payload: unknown = null;
-  const contentType = response.headers.get('Content-Type') ?? '';
-  if (contentType.includes('application/json')) {
-    try {
-      payload = await response.json();
-    } catch {
-      if (response.ok) throw new ApiError('invalid-response', response.status);
-    }
-  }
-
-  if (!response.ok) {
-    const detail =
-      typeof payload === 'object' &&
-      payload !== null &&
-      typeof (payload as { detail?: unknown }).detail === 'string'
-        ? (payload as { detail: string }).detail
-        : null;
-    // Retry-After cross-origin è leggibile perché il backend lo espone (Access-Control-Expose-
-    // Headers: Retry-After, anche su 413/429/5xx). Se manca o è illeggibile vale null e la UI
-    // mostra un messaggio generico.
-    throw new ApiError(
-      'http',
-      response.status,
-      detail,
-      parseRetryAfter(response.headers.get('Retry-After')),
-    );
-  }
-  return { status: response.status, data: payload as T };
 };

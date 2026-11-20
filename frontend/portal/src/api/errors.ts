@@ -59,6 +59,9 @@ export function describeError(error: unknown, context: ErrorContext): string {
     // Sovraccarico temporaneo (es. coda di verifica password piena): il server indica l'attesa.
     return `Servizio momentaneamente sovraccarico. Riprova tra ${formatWait(error.retryAfterSeconds)}.`;
   }
+  if (context === 'google-start' && status === 503) {
+    return "L'accesso con Google non è al momento disponibile.";
+  }
   if (status >= 500) return 'Servizio temporaneamente non disponibile. Riprova più tardi.';
   if (status === 401 && detail === DETAIL.invalidDpop) {
     return 'Verifica di sicurezza della richiesta non riuscita. Controlla che data e ora del dispositivo siano corrette, poi riprova.';

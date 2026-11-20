@@ -38,7 +38,10 @@ export async function sendEmail(
       redirect: 'error',
       signal: AbortSignal.timeout(10_000),
     });
-    if (res.ok) return { ok: true };
+    if (res.ok) {
+      await res.body?.cancel().catch(() => undefined);
+      return { ok: true };
+    }
 
     // Dal corpo dell'errore si conserva solo il nome dell'errore, mai il messaggio (può citare i dati inviati)
     const parsed = errorSchema.safeParse(await res.json().catch(() => null));

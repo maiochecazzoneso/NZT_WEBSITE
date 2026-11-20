@@ -72,11 +72,16 @@ describe('container Caddyfile (docker compose + Railway)', () => {
   it('serves the same security headers on $PORT with the API origin taken from $API_ORIGIN', () => {
     const caddy = read('deploy/Caddyfile.container').replace(
       '{$API_ORIGIN:http://localhost:8000}',
-      'http://localhost:8000',
+      PRODUCTION_API_ORIGIN,
+    );
+    const web = read('../deploy/Caddyfile.web').replace(
+      '{$API_ORIGIN:https://api.nztsolutions.it}',
+      PRODUCTION_API_ORIGIN,
     );
     expect(caddy).toContain(':{$PORT:80} {');
-    expect(caddy).toContain(`\t\tContent-Security-Policy "${buildCsp('http://localhost:8000')}"\n`);
-    expect(caddy).toContain('\t\tX-Robots-Tag "noindex, nofollow, noarchive"\n');
-    expect(caddy).toContain('\t\tX-Frame-Options "DENY"\n');
+    for (const [name, value] of Object.entries(securityHeaders(PRODUCTION_API_ORIGIN))) {
+      expect(caddy).toContain(`\t\t${name} "${value}"\n`);
+      expect(web).toContain(`\t\t${name} "${value}"\n`);
+    }
   });
 });

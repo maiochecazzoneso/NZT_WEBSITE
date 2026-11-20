@@ -39,9 +39,12 @@ def _parse_ip(value: str) -> IPAddress | None:
     elif value.count(":") == 1:  # v4:port
         value = value.split(":", 1)[0]
     try:
-        return ipaddress.ip_address(value)
+        addr = ipaddress.ip_address(value)
     except ValueError:
         return None
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        return addr.ipv4_mapped
+    return addr
 
 
 def _rightmost_hops(lines: Iterable[str]) -> list[str]:
@@ -84,3 +87,15 @@ class ClientIPResolver:
     def for_request(self, request: Request) -> str:
         peer = request.client.host if request.client else None
         return self.resolve(peer, request.headers.getlist("x-forwarded-for"))
+
+    def for_rate_limit(self, request: Request) -> str:
+        """Bucket IPv6 addresses to /64 so a subscriber cannot bypass per-IP limits by
+        rotating interface-ID host bits."""
+        ip = self.for_request(request)
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return ip
+        if isinstance(addr, ipaddress.IPv6Address):
+            return str(ipaddress.IPv6Network((addr, 64), strict=False))
+        return ip

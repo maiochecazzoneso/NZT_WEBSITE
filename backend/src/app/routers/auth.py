@@ -20,9 +20,17 @@ from app.db import (
 )
 from app.deps import DPoPProofDep, Services, ServicesDep, dpop_unauthorized
 from app.errors import www_authenticate_dpop
-from app.ratelimit import LOGIN_PER_EMAIL, LOGIN_PER_IP, REFRESH_PER_FAMILY, REGISTER_PER_IP
+from app.ratelimit import (
+    LOGIN_PER_EMAIL,
+    LOGIN_PER_IP,
+    LOGOUT_PER_IP,
+    REFRESH_PER_FAMILY,
+    REFRESH_PER_IP,
+    REGISTER_PER_IP,
+)
 from app.schemas import ErrorResponse, LoginRequest, RegisterRequest, TokenResponse
 from app.security.passwords import PasswordHasherBusyError
+from app.security.tokens import REALM_ADMIN, REALM_PORTAL
 from app.services.email_verification import (
     deliver,
     issue_verification_token,
@@ -100,7 +108,9 @@ async def password_login(
             )
             if swapped.modified_count:
                 password_hash = new_hash
-    issued = await services.sessions.create_session(user_id=user["_id"], jkt=jkt)
+    issued = await services.sessions.create_session(
+        user_id=user["_id"], jkt=jkt, realm=REALM_ADMIN if admin else REALM_PORTAL
+    )
     # Re-check AFTER the session exists that the verified hash is still current. A Google
     # takeover (routers/google.py) first removes the password, THEN revokes every family:
     # either this read sees the password gone (the new family is revoked here), or it ran
@@ -118,17 +128,28 @@ async def password_login(
 
 # --- rate-limit dependencies (resolved BEFORE body validation / DPoP) ------------------
 async def _rl_register(request: Request, services: ServicesDep) -> None:
-    await services.rate_limiter.hit(REGISTER_PER_IP, services.client_ip.for_request(request))
+    await services.rate_limiter.hit(REGISTER_PER_IP, services.client_ip.for_rate_limit(request))
 
 
 async def _rl_login_ip(request: Request, services: ServicesDep) -> None:
-    await services.rate_limiter.hit(LOGIN_PER_IP, services.client_ip.for_request(request))
+    await services.rate_limiter.hit(LOGIN_PER_IP, services.client_ip.for_rate_limit(request))
+
+
+async def _rl_refresh_ip(request: Request, services: ServicesDep) -> None:
+    await services.rate_limiter.hit(REFRESH_PER_IP, services.client_ip.for_rate_limit(request))
+
+
+async def _rl_logout(request: Request, services: ServicesDep) -> None:
+    await services.rate_limiter.hit(LOGOUT_PER_IP, services.client_ip.for_rate_limit(request))
 
 
 async def presented_refresh_token(
-    services: ServicesDep, refresh: RefreshCookie = None
+    services: ServicesDep,
+    _: Annotated[None, Depends(_rl_refresh_ip)],
+    refresh: RefreshCookie = None,
 ) -> TokenRef | None:
-    """Looked up once per request: FastAPI caches it for the rate limit AND the handler."""
+    """Looked up once per request: FastAPI caches it for the rate limit AND the handler.
+    _rl_refresh_ip runs first so rate-limited IPs cannot hit MongoDB."""
     return await services.sessions.lookup(refresh)
 
 
@@ -139,7 +160,7 @@ async def _rl_refresh(request: Request, services: ServicesDep, ref: RefreshToken
     identifier = (
         f"family:{ref.family_id}"
         if ref is not None
-        else f"anon:{services.client_ip.for_request(request)}"
+        else f"anon:{services.client_ip.for_rate_limit(request)}"
     )
     await services.rate_limiter.hit(REFRESH_PER_FAMILY, identifier)
 
@@ -260,7 +281,8 @@ async def refresh(
     "/logout",
     status_code=204,
     response_class=Response,
-    responses={401: {"model": ErrorResponse, "description": "Missing cookie / key mismatch"}},
+    responses={401: {"model": ErrorResponse, "description": "Missing cookie / key mismatch"}, **_429},
+    dependencies=[Depends(_rl_logout)],
 )
 async def logout(
     services: ServicesDep,

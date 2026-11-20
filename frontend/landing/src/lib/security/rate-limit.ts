@@ -44,7 +44,8 @@ export function createRateLimiter({
     for (const [key, times] of hits) {
       if (hits.size < maxKeys) return;
       const newest = times[times.length - 1];
-      if (newest === undefined || now - newest >= windowMs) hits.delete(key);
+      if (newest !== undefined && now - newest < windowMs) break;
+      hits.delete(key);
     }
     // Tutte le chiavi sono ancora attive: si liberano le più vecchie
     for (const key of hits.keys()) {
@@ -59,6 +60,8 @@ export function createRateLimiter({
 
       if (recent.length >= limit) {
         const oldest = recent[0] ?? now;
+        // Reinserisce in coda così le chiavi bloccate non vengono evictate prima di quelle inattive
+        hits.delete(key);
         hits.set(key, recent);
         return {
           limited: true,

@@ -98,8 +98,18 @@ export const Turnstile = forwardRef<TurnstileHandle, TurnstileProps>(function Tu
           // Invisibile per la gran parte degli utenti: compare solo se Cloudflare chiede un clic
           appearance: 'interaction-only',
           callback: (token) => onTokenRef.current(token),
-          'expired-callback': () => onTokenRef.current(null),
-          'timeout-callback': () => onTokenRef.current(null),
+          'expired-callback': () => {
+            onTokenRef.current(null);
+            if (widgetIdRef.current && window.turnstile) {
+              window.turnstile.reset(widgetIdRef.current);
+            }
+          },
+          'timeout-callback': () => {
+            onTokenRef.current(null);
+            if (widgetIdRef.current && window.turnstile) {
+              window.turnstile.reset(widgetIdRef.current);
+            }
+          },
           'error-callback': () => {
             onTokenRef.current(null);
             onErrorRef.current?.();

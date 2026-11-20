@@ -44,12 +44,17 @@ def build_services(
         settings.redis_url.get_secret_value(),
         decode_responses=True,
         socket_timeout=2.0,
-        socket_connect_timeout=2.0,
+        socket_connect_timeout=5.0,
+        socket_keepalive=True,
+        health_check_interval=30,
+        retry_on_timeout=True,
+        max_connections=32,
     )
     http = httpx.AsyncClient(
         transport=http_transport,
         follow_redirects=False,
         timeout=settings.google_http_timeout_seconds,
+        limits=httpx.Limits(max_connections=20, max_keepalive_connections=5),
         headers={"User-Agent": "nzt-area-api"},
     )
     tokens = AccessTokenService(
@@ -83,7 +88,7 @@ def build_services(
         sealer=Sealer.from_settings(settings),
         google=GoogleOIDCClient(settings, http),
         presigner=Presigner(settings),
-        mailer=build_mailer(settings),
+        mailer=build_mailer(settings, client=http),
     )
 
 
@@ -102,10 +107,16 @@ def create_app(
         try:
             yield
         finally:
-            await services.http.aclose()
-            await services.mailer.aclose()
-            await services.redis.aclose()
-            await services.mongo.close()
+            for closer in (
+                services.http.aclose,
+                services.mailer.aclose,
+                services.redis.aclose,
+                services.mongo.close,
+            ):
+                try:
+                    await closer()
+                except Exception:
+                    logger.exception("error closing %s", closer.__qualname__)
 
     docs_enabled = not settings.is_production
     app = FastAPI(
@@ -140,7 +151,7 @@ def create_app(
         allow_methods=["GET", "POST"],
         allow_headers=["Authorization", "Content-Type", "DPoP"],
         expose_headers=["Retry-After"],
-        max_age=600,
+        max_age=7200,
     )
     app.add_middleware(SecurityHeadersMiddleware, settings=settings)
     return app

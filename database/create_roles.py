@@ -31,10 +31,25 @@ from pymongo import MongoClient
 from pymongo.database import Database
 from pymongo.errors import OperationFailure
 
-from app.schema import SPECS
+from app.schema import (
+    DOWNLOAD_LOGS,
+    EMAIL_VERIFICATION_TOKENS,
+    REFRESH_TOKEN_FAMILIES,
+    REFRESH_TOKENS,
+    SPECS,
+    USERS,
+)
 
 APP_ROLE = "nztApp"
-APP_ACTIONS = ["find", "insert", "update", "remove"]
+# Per-collection least privilege: downloadLogs is append-only (insert only).
+COLLECTION_ACTIONS: dict[str, list[str]] = {
+    USERS: ["find", "insert", "update"],
+    REFRESH_TOKEN_FAMILIES: ["find", "insert", "update"],
+    REFRESH_TOKENS: ["find", "insert", "remove"],
+    EMAIL_VERIFICATION_TOKENS: ["find", "insert", "update", "remove"],
+    DOWNLOAD_LOGS: ["insert"],
+}
+DEFAULT_ACTIONS = ["find", "insert", "update", "remove"]
 MIGRATOR_USER = "nzt_migrator"
 APP_USER = "nzt_app"
 _DB_NAME = re.compile(r"^[A-Za-z0-9_-]{1,38}$")
@@ -78,7 +93,10 @@ def main() -> int:
         ensure_role(
             db,
             [
-                {"resource": {"db": db_name, "collection": spec.name}, "actions": APP_ACTIONS}
+                {
+                    "resource": {"db": db_name, "collection": spec.name},
+                    "actions": COLLECTION_ACTIONS.get(spec.name, DEFAULT_ACTIONS),
+                }
                 for spec in SPECS
             ],
         )

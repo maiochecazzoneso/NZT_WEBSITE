@@ -43,6 +43,21 @@ describe('Content-Security-Policy', () => {
     }
     expect(headers['X-Robots-Tag']).toBe('noindex, nofollow, noarchive');
   });
+
+  it('deploy/Caddyfile.container and ../deploy/Caddyfile.web carry all generated headers', () => {
+    const container = read('deploy/Caddyfile.container').replace(
+      '{$API_ORIGIN:http://localhost:8000}',
+      PRODUCTION_API_ORIGIN,
+    );
+    const web = read('../deploy/Caddyfile.web').replace(
+      '{$API_ORIGIN:https://api.nztsolutions.it}',
+      PRODUCTION_API_ORIGIN,
+    );
+    for (const [name, value] of Object.entries(securityHeaders(PRODUCTION_API_ORIGIN))) {
+      expect(container).toContain(`\t\t${name} "${value}"\n`);
+      expect(web).toContain(`\t\t${name} "${value}"\n`);
+    }
+  });
 });
 
 describe('index.html and robots.txt', () => {

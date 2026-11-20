@@ -47,7 +47,12 @@ from datetime import timedelta
 from redis.asyncio import Redis
 
 from app.db import NOT_TAKEOVER_PENDING, Collections, utcnow
-from app.security.tokens import AccessTokenService, hash_refresh_token, new_refresh_token
+from app.security.tokens import (
+    REALM_PORTAL,
+    AccessTokenService,
+    hash_refresh_token,
+    new_refresh_token,
+)
 
 _REFRESH_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
@@ -130,10 +135,17 @@ class SessionService:
         return int(await self._mark_script(keys=[key], args=[self.access_ttl + 5]))
 
     def _issued(
-        self, *, user_id: uuid.UUID, jkt: str, issued_ms: int, raw: str, family_id: uuid.UUID
+        self,
+        *,
+        user_id: uuid.UUID,
+        jkt: str,
+        aud: str,
+        issued_ms: int,
+        raw: str,
+        family_id: uuid.UUID,
     ) -> IssuedSession:
         return IssuedSession(
-            access_token=self._tokens.issue(user_id=user_id, jkt=jkt, issued_ms=issued_ms),
+            access_token=self._tokens.issue(user_id=user_id, jkt=jkt, aud=aud, issued_ms=issued_ms),
             refresh_token=raw,
             expires_in=self._tokens.ttl,
             family_id=family_id,
@@ -148,8 +160,10 @@ class SessionService:
         doc = await self._db.refresh_tokens.find_one({"_id": token_hash}, {"familyId": 1})
         return TokenRef(token_hash, doc["familyId"]) if doc is not None else None
 
-    async def create_session(self, *, user_id: uuid.UUID, jkt: str) -> IssuedSession:
-        """New family bound to the DPoP key + its first refresh token."""
+    async def create_session(
+        self, *, user_id: uuid.UUID, jkt: str, realm: str = REALM_PORTAL
+    ) -> IssuedSession:
+        """New family bound to the DPoP key and realm + its first refresh token."""
         issued_ms = await self.clock_ms()  # BEFORE the database work (see docstring)
         now = utcnow()
         family_id = uuid.uuid4()
@@ -163,6 +177,7 @@ class SessionService:
             {
                 "_id": family_id,
                 "userId": user_id,
+                "realm": realm,
                 "dpopJkt": jkt,
                 "isRevoked": False,
                 "revokedReason": None,
@@ -173,11 +188,16 @@ class SessionService:
             }
         )
         return self._issued(
-            user_id=user_id, jkt=jkt, issued_ms=issued_ms, raw=raw, family_id=family_id
+            user_id=user_id, jkt=jkt, aud=realm, issued_ms=issued_ms, raw=raw, family_id=family_id
         )
 
     async def rotate(
-        self, ref: TokenRef | None, *, jkt: str, required_role: str | None = None
+        self,
+        ref: TokenRef | None,
+        *,
+        jkt: str,
+        realm: str = REALM_PORTAL,
+        required_role: str | None = None,
     ) -> IssuedSession:
         """RTR. ``required_role`` (admin dashboard): the session is revoked and REVOKED
         raised when the user no longer has that role."""
@@ -191,6 +211,11 @@ class SessionService:
         await self._db.refresh_tokens.insert_one(
             {"_id": new_hash, "familyId": ref.family_id, "expiresAt": new_expiry, "createdAt": now}
         )
+        realm_filter: dict[str, object] = (
+            {"$or": [{"realm": REALM_PORTAL}, {"realm": {"$exists": False}}]}
+            if realm == REALM_PORTAL
+            else {"realm": realm}
+        )
         family = await self._db.families.find_one_and_update(
             {
                 "_id": ref.family_id,
@@ -198,6 +223,7 @@ class SessionService:
                 "isRevoked": False,
                 "dpopJkt": jkt,
                 "expiresAt": {"$gt": now},
+                **realm_filter,
             },
             {"$set": {"currentTokenHash": new_hash, "expiresAt": new_expiry, "updatedAt": now}},
             projection={"userId": 1},
@@ -212,20 +238,50 @@ class SessionService:
             if required_role is not None:
                 allowed["role"] = required_role
             if await self._db.users.find_one(allowed, {"_id": 1}) is None:
-                await self.revoke_family(ref.family_id, reason="user_not_allowed")
+                # Roll back currentTokenHash so a retry by a second tab isn't misclassified as reuse.
+                await self._db.families.update_one(
+                    {"_id": ref.family_id, "currentTokenHash": new_hash},
+                    {
+                        "$set": {
+                            "currentTokenHash": ref.token_hash,
+                            "isRevoked": True,
+                            "revokedReason": "user_not_allowed",
+                            "updatedAt": utcnow(),
+                        }
+                    },
+                )
+                await self._db.refresh_tokens.delete_one({"_id": new_hash})
                 raise RefreshError(RefreshOutcome.REVOKED)
             return self._issued(
-                user_id=user_id, jkt=jkt, issued_ms=issued_ms, raw=new_raw, family_id=ref.family_id
+                user_id=user_id,
+                jkt=jkt,
+                aud=realm,
+                issued_ms=issued_ms,
+                raw=new_raw,
+                family_id=ref.family_id,
             )
 
         # Nothing swapped: the new token is never handed out. Classify why.
         await self._db.refresh_tokens.delete_one({"_id": new_hash})
         state = await self._db.families.find_one(
             {"_id": ref.family_id},
-            {"currentTokenHash": 1, "isRevoked": 1, "expiresAt": 1, "dpopJkt": 1, "userId": 1},
+            {
+                "currentTokenHash": 1,
+                "isRevoked": 1,
+                "revokedReason": 1,
+                "expiresAt": 1,
+                "dpopJkt": 1,
+                "userId": 1,
+                "realm": 1,
+            },
         )
         if state is None:
             raise RefreshError(RefreshOutcome.INVALID)
+        state_realm = state.get("realm", REALM_PORTAL)
+        if state_realm != realm:
+            raise RefreshError(RefreshOutcome.INVALID)
+        if state["isRevoked"] and state.get("revokedReason") == "user_not_allowed":
+            raise RefreshError(RefreshOutcome.REVOKED)
         if state["currentTokenHash"] != ref.token_hash:
             await self.revoke_all_for_user(state["userId"], reason="reuse_detected")
             raise RefreshError(RefreshOutcome.REUSE)
@@ -262,13 +318,15 @@ class SessionService:
             await asyncio.sleep(0.001)
         raise RuntimeError("Redis clock did not advance")  # pragma: no cover
 
-    async def logout(self, ref: TokenRef | None, *, jkt: str) -> bool:
+    async def logout(self, ref: TokenRef | None, *, jkt: str, realm: str = REALM_PORTAL) -> bool:
         """Revoke the family of the presented token. False when the DPoP key does not
-        match. Unknown tokens are treated as already logged out (idempotent)."""
+        match. Unknown or cross-realm tokens are treated as already logged out (idempotent)."""
         if ref is None:
             return True
-        family = await self._db.families.find_one({"_id": ref.family_id}, {"dpopJkt": 1})
-        if family is None:
+        family = await self._db.families.find_one(
+            {"_id": ref.family_id}, {"dpopJkt": 1, "realm": 1}
+        )
+        if family is None or family.get("realm", REALM_PORTAL) != realm:
             return True
         if family["dpopJkt"] != jkt:
             return False

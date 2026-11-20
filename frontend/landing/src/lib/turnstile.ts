@@ -51,7 +51,10 @@ export async function verifyTurnstile(
       redirect: 'error',
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return { ok: false, reason: `siteverify HTTP ${res.status}` };
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => undefined);
+      return { ok: false, reason: `siteverify HTTP ${res.status}` };
+    }
 
     const parsed = siteverifySchema.safeParse(await res.json());
     if (!parsed.success) return { ok: false, reason: 'siteverify: risposta non valida' };

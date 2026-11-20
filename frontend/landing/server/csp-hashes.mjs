@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { apiSecurityHeaders, pageSecurityHeaders } from './security-headers.mjs';
 
 /** Nome del file scritto accanto al bundle server e letto da server/index.mjs all'avvio. */
 export const CSP_HASHES_FILE = 'csp-hashes.json';
@@ -139,6 +140,27 @@ export function cspHashesIntegration() {
         const target = path.join(fileURLToPath(serverDir), CSP_HASHES_FILE);
         await mkdir(path.dirname(target), { recursive: true });
         await writeFile(target, `${JSON.stringify(hashes, null, 2)}\n`, 'utf8');
+
+        // Genera anche _headers per Cloudflare Pages (deploy statico senza Node su Railway)
+        const pageHeaders = pageSecurityHeaders(hashes, { upgradeInsecureRequests: true });
+        const apiHeaders = apiSecurityHeaders();
+        const cfLines = [
+          '/*',
+          ...Object.entries(pageHeaders).map(([k, v]) => `  ${k}: ${v}`),
+          '',
+          '/_astro/*',
+          '  Cache-Control: public, max-age=31536000, immutable',
+          '',
+          '/api/*',
+          ...Object.entries(apiHeaders).map(([k, v]) => `  ${k}: ${v}`),
+          '',
+        ];
+        await writeFile(
+          path.join(fileURLToPath(clientDir), '_headers'),
+          cfLines.join('\n'),
+          'utf8',
+        );
+
         logger.info(
           `${pages} pagine analizzate: ${hashes.scripts.length} script e ${hashes.styles.length} stili inline ammessi dalla CSP`,
         );

@@ -101,13 +101,17 @@ export class SessionManager {
       if (this.snapshot.status === 'loading') this.setSnapshot('unauthenticated', null);
       return;
     }
-    const key = await this.deps.keys.get({ create: false });
-    if (!key) {
-      // Nessuna chiave = nessuna sessione possibile: niente richiesta di rete inutile.
-      if (this.snapshot.status === 'loading') this.setSnapshot('unauthenticated', null);
-      return;
+    try {
+      const key = await this.deps.keys.get({ create: false });
+      if (!key) {
+        // Nessuna chiave = nessuna sessione possibile: niente richiesta di rete inutile.
+        if (this.snapshot.status === 'loading') this.setSnapshot('unauthenticated', null);
+        return;
+      }
+      await this.refresh();
+    } catch {
+      if (this.snapshot.status === 'loading') this.setSnapshot('unauthenticated', 'unavailable');
     }
-    await this.refresh();
   }
 
   stop(): void {
@@ -178,7 +182,7 @@ export class SessionManager {
         return await this.deps.fetcher<T>({ ...request, dpopKey: key, accessToken: token });
       } catch (error) {
         if (!isUnauthorized(error)) throw error;
-        this.deps.tokens.clear();
+        if (this.deps.tokens.get(0) === token) this.deps.tokens.clear();
         if (attempt === 1) {
           this.becomeUnauthenticated('expired');
           throw error;
@@ -192,6 +196,7 @@ export class SessionManager {
 
   private async establish(path: string, body: Record<string, string>): Promise<void> {
     const generation = this.generation;
+    let accepted = false;
     await this.deps.lock(REFRESH_LOCK_NAME, async () => {
       // IndexedDB è la fonte di verità condivisa: rilettura sotto lock (un'altra scheda può averla cambiata).
       this.deps.keys.forgetCached();
@@ -215,8 +220,9 @@ export class SessionManager {
       }
       if (generation !== this.generation) return;
       this.accept(response.data);
+      accepted = true;
     });
-    this.deps.channel?.post('login');
+    if (accepted) this.deps.channel?.post('login');
   }
 
   private lockedRefresh(): Promise<boolean> {
@@ -241,9 +247,11 @@ export class SessionManager {
         return true;
       } catch (error) {
         if (isUnauthorized(error)) {
-          // Cookie assente/scaduto/revocato o legato a un'altra chiave: la chiave non serve più.
+          // Non scartare la chiave se il 401 è dovuto solo a clock skew sul proof DPoP.
           const wasAuthenticated = this.snapshot.status === 'authenticated';
-          await this.deps.keys.discard();
+          if (error.detail !== 'Invalid DPoP proof') {
+            await this.deps.keys.discard();
+          }
           this.becomeUnauthenticated(wasAuthenticated ? 'expired' : null);
           return false;
         }

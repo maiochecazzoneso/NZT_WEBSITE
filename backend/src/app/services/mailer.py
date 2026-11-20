@@ -50,10 +50,20 @@ class Mailer(Protocol):
 
 
 class ResendMailer:
-    def __init__(self, *, api_key: SecretStr, sender: str, client: httpx.AsyncClient) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: SecretStr,
+        sender: str,
+        client: httpx.AsyncClient,
+        timeout_seconds: float = 10.0,
+        owns_client: bool = False,
+    ) -> None:
         self._api_key = api_key
         self._sender = sender
         self._client = client
+        self._timeout = timeout_seconds
+        self._owns_client = owns_client
 
     async def send(self, message: OutgoingEmail) -> None:
         try:
@@ -66,6 +76,7 @@ class ResendMailer:
                     "text": message.text,
                 },
                 headers={"Authorization": f"Bearer {self._api_key.get_secret_value()}"},
+                timeout=self._timeout,
             )
         except httpx.HTTPError as exc:
             raise MailDeliveryError(f"transport error: {type(exc).__name__}") from exc
@@ -73,7 +84,8 @@ class ResendMailer:
             raise MailDeliveryError(f"provider status {response.status_code}")
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        if self._owns_client:
+            await self._client.aclose()
 
 
 class ConsoleMailer:
@@ -128,20 +140,28 @@ class MemoryMailer:
 
 
 def build_mailer(
-    settings: Settings, *, transport: httpx.AsyncBaseTransport | None = None
+    settings: Settings,
+    *,
+    client: httpx.AsyncClient | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
 ) -> Mailer:
     backend = settings.mail_backend
     if backend == "resend":
         assert settings.resend_api_key is not None
         assert settings.mail_from is not None
-        client = httpx.AsyncClient(
+        owns_client = client is None
+        http_client = client or httpx.AsyncClient(
             transport=transport,
             follow_redirects=False,
             timeout=settings.mail_http_timeout_seconds,
             headers={"User-Agent": "nzt-area-api"},
         )
         return ResendMailer(
-            api_key=settings.resend_api_key, sender=settings.mail_from, client=client
+            api_key=settings.resend_api_key,
+            sender=settings.mail_from,
+            client=http_client,
+            timeout_seconds=settings.mail_http_timeout_seconds,
+            owns_client=owns_client,
         )
     if settings.is_production:  # defence in depth: Settings already refuses this
         raise RuntimeError("only the resend mail backend is allowed in production")

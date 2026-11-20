@@ -21,13 +21,19 @@ export function createKeyManager(store: KeyPairStore, lock: LockRunner): KeyMana
   let cached: DpopKey | null = null;
   const fallback = createMemoryKeyStore();
 
+  function isPermanentIdbFailure(error: unknown): boolean {
+    if (typeof indexedDB === 'undefined') return true;
+    const name = error instanceof Error ? error.name : '';
+    return name === 'SecurityError' || name === 'InvalidStateError';
+  }
+
   async function guarded<T>(op: (s: KeyPairStore) => Promise<T>): Promise<T> {
     try {
       return await op(active);
-    } catch {
-      // IndexedDB non disponibile (es. modalità privata restrittiva): chiave solo in memoria.
-      active = fallback;
-      return op(active);
+    } catch (error) {
+      // IndexedDB non disponibile in modo deterministico: fallback in memoria.
+      if (isPermanentIdbFailure(error)) active = fallback;
+      return op(fallback);
     }
   }
 
@@ -37,12 +43,20 @@ export function createKeyManager(store: KeyPairStore, lock: LockRunner): KeyMana
       return lock(KEY_LOCK_NAME, async () => {
         if (cached) return cached;
         let pair = await guarded((s) => s.load());
-        if (!pair) {
-          if (!create) return null;
-          pair = await generateDpopKeyPair();
-          const fresh = pair;
-          await guarded((s) => s.save(fresh));
+        if (pair) {
+          try {
+            cached = await toDpopKey(pair);
+            return cached;
+          } catch {
+            // Chiave corrotta o non conforme: rimuovila e rigenera se consentito.
+            await guarded((s) => s.remove());
+            pair = null;
+          }
         }
+        if (!create) return null;
+        pair = await generateDpopKeyPair();
+        const fresh = pair;
+        await guarded((s) => s.save(fresh));
         cached = await toDpopKey(pair);
         return cached;
       });

@@ -137,12 +137,19 @@ export function createSecureServer({ handler, config, cspHashes, log }) {
       if (pathname === null) return deny(res, 400);
 
       // 3. Healthcheck: Railway interroga il container direttamente, senza passare da Cloudflare
-      if (pathname === HEALTH_PATH) {
+      if (rawUrl === HEALTH_PATH) {
         if (!READ_METHODS.has(method)) return deny(res, 405, { Allow: 'GET, HEAD' });
+        if (
+          (req.headers['content-length'] !== undefined && req.headers['content-length'] !== '0') ||
+          req.headers['transfer-encoding']
+        ) {
+          return deny(res, 400);
+        }
         res.writeHead(200, {
           ...denyHeaders,
           'Content-Type': 'text/plain; charset=utf-8',
           'Content-Length': 2,
+          Connection: 'close',
         });
         return res.end(method === 'HEAD' ? undefined : 'ok');
       }
@@ -171,7 +178,8 @@ export function createSecureServer({ handler, config, cspHashes, log }) {
 
       // 5. Metodo, endpoint interni, corpo
       const isPostRoute = POST_ROUTES.has(pathname);
-      if (!READ_METHODS.has(method) && !(method === 'POST' && isPostRoute)) {
+      const methodAllowed = isPostRoute ? method === 'POST' : READ_METHODS.has(method);
+      if (!methodAllowed) {
         audit('warn', 'method_not_allowed', {
           requestId,
           ip: anonymizeIp(clientIp),
@@ -179,6 +187,11 @@ export function createSecureServer({ handler, config, cspHashes, log }) {
           path: pathname,
         });
         return deny(res, 405, { Allow: isPostRoute ? 'POST' : 'GET, HEAD' });
+      }
+      if (pathname.startsWith('/_astro/')) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else if (!isPostRoute) {
+        res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=86400, stale-while-revalidate=604800');
       }
       if (
         BLOCKED_PATH_PREFIXES.some(
@@ -233,6 +246,7 @@ export function createSecureServer({ handler, config, cspHashes, log }) {
    */
   function fail(res, requestId, error) {
     log('error', 'request_failed', { requestId, error });
+    if (res.destroyed || res.writableEnded) return;
     if (res.headersSent) res.destroy();
     else deny(res, 500);
   }

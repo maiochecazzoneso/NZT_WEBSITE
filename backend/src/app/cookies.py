@@ -13,6 +13,7 @@ from starlette.responses import Response
 REFRESH_COOKIE: Final = "__Secure-refresh-token"
 OAUTH_STATE_COOKIE: Final = "__Secure-oauth-state"
 AUTH_COOKIE_PATH: Final = "/api/v1/auth"
+OAUTH_STATE_COOKIE_PATH: Final = "/api/v1/auth/google/callback"
 ADMIN_REFRESH_COOKIE: Final = "__Secure-admin-refresh-token"
 ADMIN_COOKIE_PATH: Final = "/api/v1/admin/auth"
 _EPOCH: Final = "Thu, 01 Jan 1970 00:00:00 GMT"
@@ -54,13 +55,27 @@ def clear_refresh_cookie(response: Response) -> None:
 
 def set_oauth_state_cookie(response: Response, sealed: str, max_age: int) -> None:
     response.headers.append(
-        "set-cookie", _render(OAUTH_STATE_COOKIE, sealed, max_age=max_age, samesite="Lax")
+        "set-cookie",
+        _render(
+            OAUTH_STATE_COOKIE,
+            sealed,
+            max_age=max_age,
+            samesite="Lax",
+            path=OAUTH_STATE_COOKIE_PATH,
+        ),
     )
 
 
 def clear_oauth_state_cookie(response: Response) -> None:
     response.headers.append(
-        "set-cookie", _render(OAUTH_STATE_COOKIE, "", max_age=0, samesite="Lax")
+        "set-cookie",
+        _render(
+            OAUTH_STATE_COOKIE,
+            "",
+            max_age=0,
+            samesite="Lax",
+            path=OAUTH_STATE_COOKIE_PATH,
+        ),
     )
 
 

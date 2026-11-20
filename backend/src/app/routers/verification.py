@@ -45,12 +45,14 @@ _429: dict[int | str, dict[str, Any]] = {
 
 
 async def _rl_verify(request: Request, services: ServicesDep) -> None:
-    await services.rate_limiter.hit(VERIFY_EMAIL_PER_IP, services.client_ip.for_request(request))
+    await services.rate_limiter.hit(
+        VERIFY_EMAIL_PER_IP, services.client_ip.for_rate_limit(request)
+    )
 
 
 async def _rl_resend_ip(request: Request, services: ServicesDep) -> None:
     await services.rate_limiter.hit(
-        RESEND_VERIFICATION_PER_IP, services.client_ip.for_request(request)
+        RESEND_VERIFICATION_PER_IP, services.client_ip.for_rate_limit(request)
     )
 
 

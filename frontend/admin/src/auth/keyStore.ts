@@ -51,12 +51,13 @@ async function withStore<T>(
   const db = await openDatabase();
   try {
     const tx = db.transaction(STORE, mode);
-    const result = await promisify(action(tx.objectStore(STORE)));
-    await new Promise<void>((resolve, reject) => {
+    const done = new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error ?? new Error('IndexedDB transaction failed'));
       tx.onabort = () => reject(tx.error ?? new Error('IndexedDB transaction aborted'));
     });
+    const result = await promisify(action(tx.objectStore(STORE)));
+    await done;
     return result;
   } finally {
     db.close();

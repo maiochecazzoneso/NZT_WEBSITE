@@ -1,6 +1,11 @@
 # Immagine Docker (docker compose locale e Railway): stessi header di Caddyfile, http dietro il proxy della
 # piattaforma. Porta e API configurabili a runtime: PORT (default 80) e API_ORIGIN (origin dell'API, default
 # http://localhost:8000: deve coincidere con VITE_API_BASE_URL usato in build).
+{
+	admin off
+	auto_https off
+}
+
 :{$PORT:80} {
 	root * /srv/nzt-admin
 	encode zstd gzip
@@ -11,9 +16,21 @@
 		Referrer-Policy "no-referrer"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
 		-Server
 	}
 
-	try_files {path} /index.html
-	file_server
+	handle /assets/* {
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	handle {
+		header Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
 }

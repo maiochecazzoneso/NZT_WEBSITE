@@ -50,15 +50,16 @@ pnpm dev:portal   # Area Clienti        (anche build:portal, test:portal)
 pnpm dev:admin    # dashboard admin     (anche build:admin, test:admin)
 ```
 
-### Deploy del sito su Railway
+### Deploy del sito (`landing`, `portal`, `admin`)
 
-Le pagine sono statiche (prerender); il server Node le serve e gestisce l'unica rotta dinamica,
-`POST /api/contact`. Railway costruisce l'immagine da `frontend/landing/Dockerfile` (contesto: radice
-del repository; configurazione in `frontend/landing/railway.json`) e avvia `node server/index.mjs`: è il
-perimetro di sicurezza che avvolge il server di Astro (header di sicurezza, verifica dell'origine, limiti
-su metodi e corpo). Non avviare direttamente `dist/server/entry.mjs`. L'healthcheck è `GET /healthz`.
+- **Opzione consigliata (Cloudflare Pages, \$0/mese):**
+  - `landing`: build `pnpm --filter nzt-solutions-web build`, output `frontend/landing/dist/client` (include `_headers` con hash CSP SHA-256 generati al build) + Pages Function `frontend/landing/functions/api/contact.ts` (`wrangler.toml` con `nodejs_compat`).
+  - `portal` e `admin`: build `pnpm build:portal` / `pnpm build:admin` copiando `deploy/_headers` e `deploy/_redirects` in `dist/`.
+- **Opzione container (Railway / Docker):**
+  - `landing`: `frontend/landing/Dockerfile` + `frontend/landing/railway.json` (`node server/index.mjs`, healthcheck `GET /healthz`).
+  - `portal` + `admin`: container unico Caddy `frontend/deploy/web.Dockerfile` + `frontend/deploy/railway.web.json` (healthcheck `GET /healthz`).
 
-Variabili da impostare su Railway (vedi `frontend/landing/.env.example`):
+Per le variabili del modulo contatti su Railway/Cloudflare Pages vedi `frontend/landing/.env.example`:
 
 | Variabile | Note |
 | --- | --- |
@@ -102,7 +103,7 @@ Un solo comando builda e avvia tutto (MongoDB, Redis, API con schema all'avvio, 
 docker compose up --build
 ```
 
-- Sito: http://localhost:4321 · Portale clienti: http://localhost:8080 · Dashboard admin: http://localhost:8081 · API: http://localhost:8000/docs
+- Sito: http://127.0.0.1:4321 · Portale clienti: http://127.0.0.1:8080 · Dashboard admin: http://127.0.0.1:8081 · API: http://127.0.0.1:8000/docs
 - Le email di verifica sono nei log: `docker compose logs -f api`. Google OAuth non è configurato. Chiavi Turnstile di test.
 - Utenti di prova (creati all'avvio dell'API, vedi `backend/docker-entrypoint.sh`, solo stack locale):
   - **Admin**: `admin@example.com` / `admin` → dashboard amministratore http://localhost:8081

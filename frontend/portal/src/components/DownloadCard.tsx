@@ -32,13 +32,21 @@ function parseDownload(data: DownloadResponse | null, now: number): DownloadStat
     typeof data.sha256 !== 'string' ||
     !/^[0-9a-f]{64}$/.test(data.sha256) ||
     typeof data.version !== 'string' ||
-    typeof data.expires_in !== 'number'
+    typeof data.expires_in !== 'number' ||
+    !Number.isFinite(data.expires_in) ||
+    data.expires_in <= 0
   ) {
+    throw new ApiError('invalid-response', 200);
+  }
+  let url: string;
+  try {
+    url = validateDownloadUrl(data.download_url);
+  } catch {
     throw new ApiError('invalid-response', 200);
   }
   return {
     phase: 'ready',
-    url: validateDownloadUrl(data.download_url),
+    url,
     sha256: data.sha256,
     version: data.version.slice(0, 32),
     expiresAt: now + data.expires_in * 1000,
@@ -138,6 +146,7 @@ export function DownloadCard() {
         <div className="flex flex-col gap-3">
           <a
             href={state.url}
+            target="_blank"
             rel="noopener noreferrer"
             referrerPolicy="no-referrer"
             className={buttonVariants({

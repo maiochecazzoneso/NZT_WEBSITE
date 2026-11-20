@@ -49,7 +49,7 @@ async def test_register_happy_path(client: httpx.AsyncClient, mongo: Collections
     assert header["kid"]
     claims = _decode(body["access_token"])
     # iat_ms: revocation-ordering instant (review L3), see services/sessions.py.
-    assert set(claims) == {"sub", "iss", "exp", "jti", "cnf", "iat", "iat_ms"}
+    assert set(claims) == {"sub", "iss", "aud", "exp", "jti", "cnf", "iat", "iat_ms"}
     assert claims["iss"] == API_BASE
     assert claims["cnf"] == {"jkt": key.thumbprint}
     assert int(claims["exp"]) - int(claims["iat"]) == 600  # type: ignore[call-overload]

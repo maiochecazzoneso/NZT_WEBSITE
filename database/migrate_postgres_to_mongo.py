@@ -89,7 +89,7 @@ def build_documents(snap: Snapshot, *, now: datetime | None = None) -> Documents
     users = [
         {
             "_id": r["id"],
-            "email": r["email"],
+            "email": r["email"].strip().lower(),
             "passwordHash": r["password_hash"],
             "isActive": r["is_active"],
             "isVerified": r["is_verified"],

@@ -1092,10 +1092,10 @@ redis-cli SET user_revoked_after_ms:<uuid> "$(( $(date +%s) * 1000 + 999 ))" EX 
 - [ ] `NZT_MONGODB_URI`, `NZT_MONGODB_DATABASE`, `NZT_REDIS_URL` impostate (imposte dalle guardie); `NZT_MONGODB_MIGRATIONS_URI` solo nel passo di schema, non sul servizio API; ruolo `nztApp` e utenti creati (§24.2); `python -m app.schema --check` verde; TLS verso MongoDB verificato.
 - [ ] `NZT_TRUSTED_PROXY_CIDRS` impostato (imposto dalle guardie, salvo opt-in `NZT_DIRECT_CLIENT_CONNECTIONS=true`) e verificato (un login da IP noto deve comparire con quell'IP in `downloadLogs` dopo un download di prova).
 - [ ] `NZT_STORAGE_ENDPOINT_URL` sull'host S3 di R2; credenziali di sola lettura limitate al bucket; bucket non pubblico; `NZT_LAUNCHER_VERSION` e `NZT_LAUNCHER_SHA256` reali; download di prova completato e hash verificato.
-- [ ] `VITE_API_BASE_URL` = `NZT_API_PUBLIC_BASE_URL`; header del portale presenti come header HTTP (CSP, `X-Robots-Tag`, `frame-ancestors`).
+- [x] `VITE_API_BASE_URL` = `NZT_API_PUBLIC_BASE_URL`; header del portale presenti come header HTTP (CSP, `X-Robots-Tag`, `frame-ancestors`, HSTS, COOP, CORP, Permissions-Policy anche su `Caddyfile.web` e `Caddyfile.container`).
 - [ ] Redis non raggiungibile da Internet; cluster MongoDB con IP Access List ristretta (nessun `0.0.0.0/0`).
 - [ ] Dati PostgreSQL migrati (§24.2), poi script di migrazione e servizio PostgreSQL rimossi.
-- [ ] Uvicorn avviato con `--no-proxy-headers`.
+- [x] Uvicorn avviato con `--no-proxy-headers --no-server-header --timeout-keep-alive 65`.
 - [ ] Test backend (220) e portale (110) verdi sul commit da rilasciare; `pnpm audit --prod` e `pip-audit` senza vulnerabilità aperte.
 - [ ] Prova manuale end-to-end in produzione: registrazione, login, reload, Google, download, logout.
 - [ ] Decisione presa su O-P1 (finestra di grazia), verifica email (R-2/M2), replay di token storici (R-21/L1), cookie tossing (R-18/L5), privilegi su `downloadLogs` (R-23/I4).
@@ -1128,6 +1128,27 @@ Tutte le risposte d'errore hanno body `{"detail": …}` e, per gli origin del po
 | `backend/src/app/config.py` | Configurazione, segreti `SecretStr`, guardie di produzione |
 | `backend/src/app/security/dpop.py` | Validazione prove DPoP, anti-replay |
 | `backend/src/app/security/tokens.py` | Access token EdDSA, generazione e hash dei refresh token |
+
+---
+
+## Appendice C — Aggiornamento hardening & ottimizzazione Railway (2026-11-18)
+
+1. **Isolamento realm Customer vs Admin (in attesa di SSO admin dedicato):**
+   - Access token JWT firmati con claim obbligatorio `aud` (`"portal"` / `"admin"`), verificato in `tokens.py` e `deps.py:get_current_admin`; `refreshTokenFamilies` traccia `realm` (`"portal"` / `"admin"`) in `sessions.py` e `schema.py`.
+   - `_take_over_unverified_account` in `routers/google.py` limitato a `"role": "customer"`; `LOGIN_PER_EMAIL` condiviso tra `/auth/login` e `/admin/auth/login`.
+2. **Hardening API, DPoP, IP e database:**
+   - `dpop.py` e `services/google.py`: confronto `hmac.compare_digest` su `bytes` (previene `TypeError` 500 su input non-ASCII); `dpop.py` rifiuta `userinfo` e `:0` in `htu` e amplia la finestra anti-replay a `2*leeway + 30s`.
+   - `services/google.py`: corretto bug cold-start JWKS (`_jwks_fetched_at = None` nei primi 60s di uptime) e protezione contro cache vuota.
+   - `sessions.py`: rollback di `currentTokenHash` su revoca `user_not_allowed` (evita falsi positivi di reuse detection).
+   - `client_ip.py`: unwrap IPv4-mapped IPv6 (`::ffff:x.x.x.x`) e bucketing IPv6 `/64` (`for_rate_limit`) per il rate limiter; rate limit pre-DB su `/refresh` e su `/logout`; cache 2s su `/healthz`.
+   - `schema.py`: `_schema_settings()` isolato (nessun segreto API richiesto per `python -m app.schema` in produzione); `database/create_roles.py`: `downloadLogs` ristretto a `["insert"]` (append-only).
+   - `config.py`: validazione `NZT_REDIS_URL` (password + `rediss://` esterno) e URL `https://` OIDC in produzione.
+3. **Resilienza Frontend (`portal` / `admin`):**
+   - `session.ts`, `keyManager.ts`, `keyStore.ts`, `http.ts`: gestione `try/catch` in `session.start()`, non-distruzione della chiave DPoP su `401 Invalid DPoP proof` (clock skew), registrazione sincrona listener `IDBTransaction`, timeout `apiFetch` esteso alla lettura JSON, compare-and-clear sul token, fix `SoonButton` e `ApiError` in `admin`.
+4. **Ottimizzazione computazionale Railway & Cloudflare Pages:**
+   - Rimozione totale di `boto3`/`botocore` (sostituito con presigner AWS SigV4 stdlib in `services/storage.py`), rimozione extra superflui di `uvicorn[standard]`, Dockerfile multi-stage con `MALLOC_ARENA_MAX=2`, `--no-proxy-headers --no-server-header --timeout-keep-alive 65`, `_dummy_hash` precalcolato, client `httpx` condiviso e pool Mongo/Redis dimensionati.
+   - `web.Dockerfile` non-root con asset pre-compressi `zstd`/`gzip`, `Caddyfile.web` e `Caddyfile.container` allineati a `csp.config.ts` con `Cache-Control: immutable` separato dal fallback SPA `try_files`, e `railway.web.json` su `/healthz`.
+
 | `backend/src/app/security/passwords.py` | Argon2id, semaforo, coda limitata (`503`), dummy verify, politica password |
 | `backend/src/app/security/sealed.py` | AES-256-GCM del cookie di state OAuth |
 | `backend/src/app/security/jose_utils.py` | base64url stretto, thumbprint RFC 7638 |

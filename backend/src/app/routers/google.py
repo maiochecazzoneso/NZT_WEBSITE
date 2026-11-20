@@ -18,6 +18,7 @@ from pymongo.errors import DuplicateKeyError
 from app.cookies import OAUTH_STATE_COOKIE, clear_oauth_state_cookie, set_oauth_state_cookie
 from app.db import (
     PROVIDER_GOOGLE,
+    ROLE_CUSTOMER,
     TAKEOVER_PENDING,
     Collections,
     Document,
@@ -50,12 +51,14 @@ _429: dict[int | str, dict[str, Any]] = {
 
 async def _rl_authorize(request: Request, services: ServicesDep) -> None:
     await services.rate_limiter.hit(
-        GOOGLE_AUTHORIZE_PER_IP, services.client_ip.for_request(request)
+        GOOGLE_AUTHORIZE_PER_IP, services.client_ip.for_rate_limit(request)
     )
 
 
 async def _rl_callback(request: Request, services: ServicesDep) -> None:
-    await services.rate_limiter.hit(GOOGLE_CALLBACK_PER_IP, services.client_ip.for_request(request))
+    await services.rate_limiter.hit(
+        GOOGLE_CALLBACK_PER_IP, services.client_ip.for_rate_limit(request)
+    )
 
 
 def _fail(status_code: int, detail: str) -> JSONResponse:
@@ -122,6 +125,7 @@ async def _take_over_unverified_account(
     swapped = await db.users.update_one(
         {
             "_id": user_id,
+            "role": ROLE_CUSTOMER,
             "isVerified": False,
             "isActive": True,
             "identities.provider": {"$ne": PROVIDER_GOOGLE},

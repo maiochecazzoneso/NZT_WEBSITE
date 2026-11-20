@@ -14,7 +14,7 @@ export function SoonBadge() {
 /** Pulsante d'azione disabilitato (funzione non ancora collegata all'API). */
 export function SoonButton({ children, ...props }: ButtonProps) {
   return (
-    <Button type="button" disabled aria-disabled="true" title="Funzione in arrivo" {...props}>
+    <Button title="Funzione in arrivo" {...props} type="button" disabled aria-disabled="true">
       {children}
     </Button>
   );

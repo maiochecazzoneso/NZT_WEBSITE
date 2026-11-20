@@ -23,6 +23,7 @@ def build_csp(settings: Settings) -> str:
     for origin in (
         settings.api_public_base_url,
         *settings.portal_origins,
+        *settings.admin_origins,
         settings.storage_public_origin,
     ):
         if origin not in connect:

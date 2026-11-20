@@ -63,7 +63,7 @@ class GoogleOIDCClient:
         self._s = settings
         self._http = http
         self._jwks: dict[str, PyJWK] = {}
-        self._jwks_fetched_at = 0.0
+        self._jwks_fetched_at: float | None = None
         self._jwks_lock = asyncio.Lock()
 
     @property
@@ -119,7 +119,9 @@ class GoogleOIDCClient:
         claims = await self._verify_id_token(id_token)
 
         token_nonce = claims.get("nonce")
-        if not isinstance(token_nonce, str) or not hmac.compare_digest(token_nonce, nonce):
+        if not isinstance(token_nonce, str) or not hmac.compare_digest(
+            token_nonce.encode("utf-8"), nonce.encode("utf-8")
+        ):
             raise OIDCError("Invalid id_token nonce")
         if claims.get("email_verified") is not True:
             raise OIDCError("Google account email is not verified")
@@ -162,13 +164,22 @@ class GoogleOIDCClient:
 
     async def _get_key(self, kid: str) -> PyJWK:
         now = time.monotonic()
-        fresh = now - self._jwks_fetched_at < _JWKS_TTL_SECONDS
+        fresh = (
+            self._jwks_fetched_at is not None
+            and now - self._jwks_fetched_at < _JWKS_TTL_SECONDS
+        )
         if kid in self._jwks and fresh:
             return self._jwks[kid]
         async with self._jwks_lock:
             now = time.monotonic()
-            stale = now - self._jwks_fetched_at >= _JWKS_TTL_SECONDS
-            may_refresh = now - self._jwks_fetched_at >= _JWKS_MIN_REFRESH_SECONDS
+            stale = (
+                self._jwks_fetched_at is None
+                or now - self._jwks_fetched_at >= _JWKS_TTL_SECONDS
+            )
+            may_refresh = (
+                self._jwks_fetched_at is None
+                or now - self._jwks_fetched_at >= _JWKS_MIN_REFRESH_SECONDS
+            )
             if stale or (kid not in self._jwks and may_refresh):
                 await self._refresh_jwks()
         if kid not in self._jwks:
@@ -194,5 +205,7 @@ class GoogleOIDCClient:
                 keys[item["kid"]] = PyJWK(item, algorithm="RS256")
             except jwt.PyJWTError:
                 continue
+        if not keys:
+            raise OIDCError("Identity provider returned no signing keys", status=502)
         self._jwks = keys
         self._jwks_fetched_at = time.monotonic()

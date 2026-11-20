@@ -84,7 +84,7 @@ async def consume_verification_token(db: Collections, raw: str) -> uuid.UUID | N
         return None
     user_id: uuid.UUID = token["userId"]
     verified = await db.users.update_one(
-        {"_id": user_id}, {"$set": {"isVerified": True, "updatedAt": now}}
+        {"_id": user_id, "isActive": True}, {"$set": {"isVerified": True, "updatedAt": now}}
     )
     if verified.matched_count == 0:
         return None
@@ -113,6 +113,6 @@ async def deliver(mailer: Mailer, message: OutgoingEmail) -> bool:
     try:
         await mailer.send(message)
     except Exception as exc:  # never fail the caller (registration / background task)
-        logger.warning("verification email delivery failed (%s)", type(exc).__name__)
+        logger.warning("verification email delivery failed (%s: %s)", type(exc).__name__, exc)
         return False
     return True

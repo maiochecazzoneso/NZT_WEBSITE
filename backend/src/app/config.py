@@ -65,7 +65,7 @@ def _mongo_uri_parts(uri: str) -> tuple[bool, dict[str, str]]:
     # The driver accepts both "&" and ";" as option separators.
     query = parts.query.replace(";", "&")
     options = {k.lower(): v.lower() for k, v in parse_qsl(query, keep_blank_values=True)}
-    return bool(userinfo.partition(":")[0]), options
+    return bool(userinfo.partition(":")[0] and userinfo.partition(":")[2]), options
 
 
 def _is_blank(value: object) -> bool:
@@ -244,8 +244,11 @@ class Settings(BaseSettings):
     @classmethod
     def _check_state_key(cls, v: SecretStr | None) -> SecretStr | None:
         if v is not None:
+            raw_str = v.get_secret_value()
+            if not re.fullmatch(r"[A-Za-z0-9_-]{43}={0,2}", raw_str):
+                raise ValueError("oauth_state_key must be base64url of 32 bytes")
             try:
-                raw = base64.urlsafe_b64decode(v.get_secret_value() + "==")
+                raw = base64.urlsafe_b64decode(raw_str + "=" * (-len(raw_str) % 4))
             except (binascii.Error, ValueError) as exc:
                 raise ValueError("oauth_state_key must be base64url") from exc
             if len(raw) != 32:
@@ -307,9 +310,20 @@ class Settings(BaseSettings):
             self.storage_public_origin,
             *self.portal_origins,
             *self.admin_origins,
+            self.effective_google_redirect_uri,
+            self.google_authorization_endpoint,
+            self.google_token_endpoint,
+            self.google_jwks_uri,
         ]
         if any(not u.startswith("https://") for u in urls):
             raise ValueError("production public URLs must be https")
+        redis_parts = urlsplit(self.redis_url.get_secret_value())
+        if redis_parts.scheme not in {"redis", "rediss"} or not redis_parts.hostname:
+            raise ValueError("production requires a valid redis:// or rediss:// NZT_REDIS_URL")
+        if not redis_parts.password:
+            raise ValueError("production requires a password in NZT_REDIS_URL")
+        if redis_parts.scheme != "rediss" and not redis_parts.hostname.endswith(".railway.internal"):
+            raise ValueError("production requires rediss:// for external NZT_REDIS_URL")
         storage = urlsplit(self.storage_endpoint_url)
         if storage.scheme != "https" or not storage.hostname:
             raise ValueError("production requires an https NZT_STORAGE_ENDPOINT_URL")

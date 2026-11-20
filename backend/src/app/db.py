@@ -76,6 +76,7 @@ def create_client(settings: Settings, *, uri: str | None = None) -> Client:
         "retryWrites": True,
         "retryReads": True,
         "maxPoolSize": settings.mongodb_max_pool_size,
+        "maxIdleTimeMS": 60_000,
         "timeoutMS": settings.mongodb_timeout_ms,
         "serverSelectionTimeoutMS": settings.mongodb_server_selection_timeout_ms,
     }

@@ -2,7 +2,7 @@
 // (SessionManager.authorizedFetch: DPoP + access token + 1 retry dopo refresh su 401), iniettato
 // per poterlo sostituire nei test.
 
-import type { ApiResponse } from './http';
+import { ApiError, type ApiResponse } from './http';
 import type {
   AdminMe,
   AuditEntry,
@@ -38,7 +38,7 @@ export function customersPath(query: CustomerQuery): string {
 export function createAdminApi(fetcher: AuthorizedFetcher) {
   async function get<T>(path: string): Promise<T> {
     const { data } = await fetcher<T>({ method: 'GET', path });
-    if (data === null) throw new Error('Empty response');
+    if (data === null) throw new ApiError('invalid-response', 200);
     return data;
   }
   async function post<T>(path: string, body?: unknown): Promise<T | null> {
@@ -64,13 +64,13 @@ export function createAdminApi(fetcher: AuthorizedFetcher) {
     products: () => get<Product[]>(`${ADMIN_BASE}/products`),
     saveProduct: async (input: ProductInput): Promise<Product> => {
       const data = await post<Product>(`${ADMIN_BASE}/products`, input);
-      if (data === null) throw new Error('Empty response');
+      if (data === null) throw new ApiError('invalid-response', 200);
       return data;
     },
     campaigns: () => get<Campaign[]>(`${ADMIN_BASE}/campaigns`),
     createCampaign: async (input: CampaignInput): Promise<Campaign> => {
       const data = await post<Campaign>(`${ADMIN_BASE}/campaigns`, input);
-      if (data === null) throw new Error('Empty response');
+      if (data === null) throw new ApiError('invalid-response', 200);
       return data;
     },
     testCampaign: async (campaignId: Campaign['id']): Promise<void> => {
@@ -78,7 +78,7 @@ export function createAdminApi(fetcher: AuthorizedFetcher) {
     },
     sendCampaign: async (campaignId: Campaign['id']): Promise<Campaign> => {
       const data = await post<Campaign>(`${ADMIN_BASE}/campaigns/${id(campaignId)}/send`);
-      if (data === null) throw new Error('Empty response');
+      if (data === null) throw new ApiError('invalid-response', 200);
       return data;
     },
     audit: () => get<AuditEntry[]>(`${ADMIN_BASE}/audit`),
