@@ -62,12 +62,22 @@ nell'ambiente **Preview**. Senza dominio proprio l'API di test si raggiunge su
 `NZT_PORTAL_ORIGINS` / `NZT_ADMIN_ORIGINS`); la sessione non sopravvive al ricaricamento perché i
 domini `pages.dev` e `up.railway.app` sono siti diversi (cookie `SameSite=Strict`).
 
-### Flusso di lavoro: `main` è l'unica versione online
+### Flusso di lavoro: tre livelli separati
 
-| Branch | Cosa succede |
-|---|---|
-| `main` (merge o push) | Railway ridistribuisce l'API (se cambia `backend/`), l'API applica lo schema MongoDB all'avvio, GitHub Actions pubblica sito, portale e admin su Cloudflare Pages (se cambia `frontend/`) |
-| qualsiasi altro branch | nulla online: si prova in locale con `docker compose up --build` |
+| Livello | Branch | Railway | MongoDB (`nzt-cluster`) | Cloudflare Pages |
+|---|---|---|---|---|
+| Locale | qualsiasi | — (`docker compose up --build`) | Mongo locale | — |
+| Test | `test` | ambiente `test` (`api`, `Redis`), spento quando non serve | `nzt_test`, utenti `nzt_test_app` / `nzt_test_migrator` | `nzt-sito-test`, `nzt-portal-test`, `nzt-admin-test` |
+| Produzione | `main` | ambiente `production` (`api`, `Redis`) | `nzt_prod`, utenti `nzt_prod_app` / `nzt_prod_migrator` | `nzt-sito`, `nzt-portal`, `nzt-admin` |
+
+Ogni livello ha servizi, database, utenti MongoDB e chiavi propri: un push su `main` non tocca il test e
+viceversa. Railway ridistribuisce l'API solo se cambia `backend/`; l'API applica lo schema MongoDB
+all'avvio (`NZT_BOOTSTRAP=true`, ammesso finché `NZT_ENVIRONMENT` non è `production`); GitHub Actions
+pubblica i frontend solo se cambia `frontend/`.
+
+Produzione in "modalità test": finché mancano dominio e chiavi reali (Google OIDC, R2, Resend, SHA del
+launcher) l'API di produzione gira con `NZT_ENVIRONMENT=test`. Il passaggio a `production` richiede
+quelle chiavi, `NZT_BOOTSTRAP=false` e lo schema applicato con `python -m app.schema`.
 
 Stack locale (dalla radice del repo, serve Docker): sito `http://localhost:4321`, portale
 `http://localhost:8080`, admin `http://localhost:8081`, API `http://localhost:8000`, con MongoDB e
@@ -76,13 +86,15 @@ Per lavorare su una sola parte con ricaricamento automatico: `pnpm dev`, `pnpm d
 
 #### Pubblicazione dei frontend (GitHub Actions → Cloudflare Pages)
 
-`.github/workflows/deploy-frontend.yml` (solo da `main`) compila e pubblica i progetti Pages
-`nzt-sito`, `nzt-portal`, `nzt-admin` (creati al primo giro); il sito pubblica anche la Pages
-Function `POST /api/contact`. Gli indirizzi finali compaiono nel riepilogo di ogni esecuzione
-(scheda *Actions*). Si può rilanciare a mano da *Actions → Deploy frontend → Run workflow*.
+`.github/workflows/deploy-frontend.yml` (solo da `main` e `test`) compila e pubblica i tre progetti
+Pages dell'ambiente (creati al primo giro); il sito pubblica anche la Pages Function `POST /api/contact`.
+Gli indirizzi finali compaiono nel riepilogo di ogni esecuzione (scheda *Actions*). Si può rilanciare a
+mano da *Actions → Deploy frontend → Run workflow*.
 
 Configurazione una tantum su GitHub (*Settings → Secrets and variables → Actions*):
-segreti `CLOUDFLARE_API_TOKEN` (permesso *Account → Cloudflare Pages → Edit*) e `CLOUDFLARE_ACCOUNT_ID`;
-variabili facoltative `API_BASE_URL`, `CLIENT_AREA_URL`, `TURNSTILE_SITE_KEY`.
-Segreti del modulo contatti (`TURNSTILE_SECRET_KEY`, `RESEND_API_KEY`, …): progetto Pages `nzt-sito`
+- segreti `CLOUDFLARE_API_TOKEN` (permesso *Account → Cloudflare Pages → Edit*) e `CLOUDFLARE_ACCOUNT_ID`;
+- variabili `PROD_API_BASE_URL`, `TEST_API_BASE_URL` (obbligatorie) e, facoltative,
+  `PROD_CLIENT_AREA_URL`, `TEST_CLIENT_AREA_URL`, `PROD_TURNSTILE_SITE_KEY`, `TEST_TURNSTILE_SITE_KEY`.
+
+Segreti del modulo contatti (`TURNSTILE_SECRET_KEY`, `RESEND_API_KEY`, …): progetto Pages del sito
 → *Settings → Variables and Secrets*.

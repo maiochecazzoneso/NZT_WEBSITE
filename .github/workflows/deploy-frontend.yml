@@ -1,16 +1,19 @@
-# Pubblicazione automatica dei tre frontend su Cloudflare Pages SOLO da main (merge/push su main).
+# Pubblicazione automatica dei tre frontend su Cloudflare Pages:
+#   main -> produzione: progetti nzt-sito / nzt-portal / nzt-admin, API dell'ambiente Railway production
+#   test -> test:       progetti nzt-*-test, API dell'ambiente Railway test (acceso solo quando serve)
 # Gli altri branch non pubblicano nulla: si provano in locale (docker compose up --build).
-# Finché non c'è il dominio, main punta all'API dell'ambiente Railway online (variabile API_BASE_URL).
 # Segreti richiesti nel repository (Settings -> Secrets and variables -> Actions):
 #   CLOUDFLARE_API_TOKEN  (permesso: Account -> Cloudflare Pages -> Edit)
 #   CLOUDFLARE_ACCOUNT_ID
-# Variabili facoltative (stessa pagina, scheda Variables): API_BASE_URL, CLIENT_AREA_URL,
-# TURNSTILE_SITE_KEY.
+# Variabili (stessa pagina, scheda Variables), una coppia per ambiente:
+#   PROD_API_BASE_URL / TEST_API_BASE_URL       origin dell'API (obbligatoria)
+#   PROD_CLIENT_AREA_URL / TEST_CLIENT_AREA_URL link "Area clienti" del sito (facoltativa)
+#   PROD_TURNSTILE_SITE_KEY / TEST_TURNSTILE_SITE_KEY (facoltativa, default chiave di test Cloudflare)
 name: Deploy frontend
 
 on:
   push:
-    branches: [main]
+    branches: [main, test]
     paths:
       - 'frontend/**'
       - 'pnpm-lock.yaml'
@@ -27,8 +30,15 @@ concurrency:
 
 env:
   WRANGLER: pnpm dlx wrangler@4.165.0
-  PRODUCTION_BRANCH: main
-  API_BASE_URL: ${{ vars.API_BASE_URL || 'https://api-test-d8d23d2f.up.railway.app' }}
+  # Ogni ambiente Pages ha come branch di produzione il proprio branch Git
+  PRODUCTION_BRANCH: ${{ github.ref_name }}
+  # Nelle espressioni GitHub '' vale "falso": ogni valore è scelto con due condizioni esplicite,
+  # così una variabile di produzione mancante non ricade mai su quella di test (e viceversa).
+  SUFFIX: ${{ github.ref_name != 'main' && '-test' || '' }}
+  ENV_LABEL: ${{ github.ref_name == 'main' && 'PROD' || 'TEST' }}
+  API_BASE_URL: ${{ github.ref_name == 'main' && vars.PROD_API_BASE_URL || github.ref_name != 'main' && vars.TEST_API_BASE_URL || '' }}
+  CLIENT_AREA_URL: ${{ github.ref_name == 'main' && vars.PROD_CLIENT_AREA_URL || github.ref_name != 'main' && vars.TEST_CLIENT_AREA_URL || '' }}
+  TURNSTILE_SITE_KEY: ${{ github.ref_name == 'main' && vars.PROD_TURNSTILE_SITE_KEY || github.ref_name != 'main' && vars.TEST_TURNSTILE_SITE_KEY || '1x00000000000000000000AA' }}
 
 jobs:
   deploy:
@@ -60,10 +70,14 @@ jobs:
       run:
         shell: bash # -eo pipefail: un errore di wrangler non viene nascosto da `tee`
     steps:
-      - name: Controlla i segreti Cloudflare
+      - name: Controlla segreti e variabili
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
             echo "::error::Mancano i segreti CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID (Settings -> Secrets and variables -> Actions)"
+            exit 1
+          fi
+          if [ -z "$API_BASE_URL" ]; then
+            echo "::error::Manca la variabile ${ENV_LABEL}_API_BASE_URL (Settings -> Secrets and variables -> Actions -> Variables)"
             exit 1
           fi
       - uses: actions/checkout@v4
@@ -82,13 +96,14 @@ jobs:
           VITE_API_BASE_URL: ${{ env.API_BASE_URL }}
           NZT_EMIT_PAGES_HEADERS: '1'
           # sito: link "Area clienti" e chiave pubblica Turnstile (default: chiave di test Cloudflare)
-          PUBLIC_CLIENT_AREA_URL: ${{ vars.CLIENT_AREA_URL }}
-          PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY || '1x00000000000000000000AA' }}
+          PUBLIC_CLIENT_AREA_URL: ${{ env.CLIENT_AREA_URL }}
+          PUBLIC_TURNSTILE_SITE_KEY: ${{ env.TURNSTILE_SITE_KEY }}
         run: ${{ matrix.build }}
       - name: Crea il progetto Pages se non esiste
         run: |
-          if ! $WRANGLER pages project list 2>/dev/null | grep -qw "${{ matrix.project }}"; then
-            $WRANGLER pages project create "${{ matrix.project }}" --production-branch "$PRODUCTION_BRANCH"
+          # Nome esatto: "nzt-sito" non deve combaciare con "nzt-sito-test"
+          if ! $WRANGLER pages project list 2>/dev/null | grep -Eq "(^|[^a-z0-9-])${{ matrix.project }}${SUFFIX}([^a-z0-9-]|$)"; then
+            $WRANGLER pages project create "${{ matrix.project }}${SUFFIX}" --production-branch "$PRODUCTION_BRANCH"
           fi
       - name: Pubblica
         working-directory: ${{ matrix.workdir }}
@@ -96,8 +111,8 @@ jobs:
         # (nodejs_compat). Portale/admin: dalla radice (nessuna configurazione wrangler).
         run: |
           $WRANGLER pages deploy "${{ matrix.output }}" \
-            --project-name "${{ matrix.project }}" \
+            --project-name "${{ matrix.project }}${SUFFIX}" \
             --branch "${GITHUB_REF_NAME}" \
             --commit-hash "${GITHUB_SHA}" | tee deploy.log
           url=$(grep -Eo 'https://[a-zA-Z0-9.-]+\.pages\.dev' deploy.log | tail -1)
-          echo "### ${{ matrix.app }}: ${url} (progetto ${{ matrix.project }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "### ${{ matrix.app }}: ${url} (progetto ${{ matrix.project }}${SUFFIX})" >> "$GITHUB_STEP_SUMMARY"
