@@ -58,3 +58,16 @@ export function securityHeaders(
     'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
   };
 }
+
+/**
+ * File `_headers` (formato Cloudflare Pages) generato dalla stessa origin API del bundle: in test
+ * (VITE_API_BASE_URL=https://api-test…) la CSP punta all'API di test senza modificare deploy/_headers.
+ */
+export function renderPagesHeaders(apiBaseUrl: string): string {
+  const lines = ['/*'];
+  for (const [name, value] of Object.entries(securityHeaders(apiBaseUrl))) {
+    lines.push(`  ${name}: ${value}`);
+  }
+  lines.push('', '/assets/*', '  Cache-Control: public, max-age=31536000, immutable', '');
+  return lines.join('\n');
+}
