@@ -1,0 +1,15 @@
+// Cloudflare Workers (solo asset statici) per il portal. Build: pnpm build:portal (dalla radice del repo).
+// Deploy:        npx wrangler deploy --config frontend/portal/wrangler.jsonc
+// Altri branch:  npx wrangler versions upload --config frontend/portal/wrangler.jsonc
+// "name" deve coincidere con il nome del Worker creato nella dashboard Cloudflare.
+{
+  "name": "nzt-portal-test",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./dist",
+    // SPA: le rotte client (/accedi, /download, ...) servono index.html
+    "not_found_handling": "single-page-application"
+  },
+  "preview_urls": true,
+  "previews": {}
+}
