@@ -1,0 +1,38 @@
+# Nulla di ciò che segue deve entrare nel contesto di build (né quindi nell'immagine).
+# Il contesto è la radice del repository: i pattern con **/ valgono in ogni cartella.
+.git
+.github
+**/node_modules
+**/dist
+**/.astro
+**/coverage
+
+# Segreti e configurazione locale
+**/.env
+**/.env.*
+!**/.env.example
+
+# Materiale non necessario al build
+docs
+**/*.md
+docker-compose.yml
+**/Dockerfile
+**/*.Dockerfile
+**/*.dockerignore
+.dockerignore
+.pre-commit-config.yaml
+.idea
+**/.DS_Store
+
+# Backend e database hanno immagini proprie
+backend
+database
+frontend/landing/tests
+
+# Il sito non usa il resto del frontend (i package.json necessari sono copiati a parte)
+frontend/portal/src
+frontend/portal/tests
+frontend/admin/src
+frontend/admin/tests
+frontend/ui/src
+frontend/deploy

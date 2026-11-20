@@ -3,7 +3,7 @@
 > **Progetto:** Sito Web Ufficiale (`nztsolutions.it`) e futura Area Clienti (`clienti.nztsolutions.it`)  
 > **Modello:** Zero-Trust, minimo privilegio, difesa in profondità  
 > **Standard di conformità:** OWASP Top 10 (2021) • OWASP API Security Top 10 (2023) • CIS Benchmarks  
-> **Ultimo aggiornamento:** 2026-11-15 — vedi [Registro delle modifiche](#15-registro-delle-modifiche)
+> **Ultimo aggiornamento:** 2026-11-18 — vedi [Registro delle modifiche](#15-registro-delle-modifiche)
 
 Questo è il documento **vincolante** per tutto ciò che riguarda la sicurezza del progetto. Contiene due cose
 insieme: le **regole** (il blueprint) e lo **stato reale** della loro applicazione nel repository.
@@ -36,35 +36,35 @@ solo il sito: lo stack reale è più piccolo, e questo riduce la superficie d'at
 | Componente del blueprint | Oggi nel progetto |
 | :-- | :-- |
 | Astro (TypeScript) | **Presente.** Astro 7, pagine statiche prerenderizzate + isole React |
-| Server applicativo | **Presente.** Node 22 (`@astrojs/node`), avviato da `server/index.mjs` su Railway |
+| Server applicativo | **Presente.** Node 22 (`@astrojs/node`), avviato da `frontend/landing/server/index.mjs` su Railway |
 | API | **Presente, una sola rotta:** `POST /api/contact` (modulo contatti → email via Resend) |
 | Python (FastAPI/ASGI) | **Assente.** Previsto per l'Area Clienti |
 | PostgreSQL / MongoDB / Redis | **Assenti.** Nessun dato persistito dal sito |
 | Autenticazione, sessioni, token | **Assenti.** Nessun utente, nessun cookie di sessione |
 | Upload di file | **Assente** |
 | Cloudflare | Turnstile attivo sul modulo; proxy/WAF davanti al dominio da completare ([§11](#11-checklist-operativa-fuori-dal-repository)) |
-| Railway | **Presente.** Deploy da `Dockerfile` |
+| Railway | **Presente.** Deploy da `frontend/landing/Dockerfile` |
 
 ### 0.2 Stato di applicazione
 
 | § | Regola | Stato | Dove |
 | :-- | :-- | :-: | :-- |
-| 1.1 | Nessun database con endpoint pubblico; solo rete privata Railway | ⏳ | — |
-| 1.2 | Origin IP cloaking: l'origine risponde solo a Cloudflare (`X-Origin-Verify`) | ✅ codice · 🔧 attivazione | `server/create-server.mjs`, `server/origin-verify.mjs` |
-| 1.2 | IP del client ricavato solo da proxy verificati | ✅ | `server/client-ip.mjs` |
+| 1.1 | Nessun database con endpoint pubblico; solo rete privata Railway (MongoDB esterno: database per servizio, IP Access List, TLS verificato) | ✅ Redis · 🔧 IP Access List del cluster MongoDB | `backend/src/app/config.py` (guardie TLS) |
+| 1.2 | Origin IP cloaking: l'origine risponde solo a Cloudflare (`X-Origin-Verify`) | ✅ codice · 🔧 attivazione | `frontend/landing/server/create-server.mjs`, `frontend/landing/server/origin-verify.mjs` |
+| 1.2 | IP del client ricavato solo da proxy verificati | ✅ | `frontend/landing/server/client-ip.mjs` |
 | 1.2 | Proxy Cloudflare, WAF, TLS minimo, DNSSEC, CAA | 🔧 | Cloudflare / registrar |
-| 2.1 | `security.checkOrigin` attivo + controllo stessa origine sulle API | ✅ | `astro.config.mjs`, `src/lib/security/request-guards.ts` |
-| 2.2 | Security header su **ogni** risposta, CSP senza `unsafe-inline`/`unsafe-eval` per gli script | ✅ | `server/security-headers.mjs`, `server/csp-hashes.mjs`, `src/middleware.ts` |
+| 2.1 | `security.checkOrigin` attivo + controllo stessa origine sulle API | ✅ | `frontend/landing/astro.config.mjs`, `frontend/landing/src/lib/security/request-guards.ts` |
+| 2.2 | Security header su **ogni** risposta, CSP senza `unsafe-inline`/`unsafe-eval` per gli script | ✅ | `frontend/landing/server/security-headers.mjs`, `frontend/landing/server/csp-hashes.mjs`, `frontend/landing/src/middleware.ts` |
 | 2.3 | Nessun `set:html` / `dangerouslySetInnerHTML` con dati non fidati | ✅ (nessun uso nel codice) | — |
-| 3.1 | Validazione a schema rigoroso, chiavi extra rifiutate | ✅ (Zod strict) · ⏳ Pydantic | `src/lib/contact-schema.ts` |
-| 3.2 | Query parametrizzate, anti-IDOR/BOLA, anti NoSQL-injection | ⏳ | — |
-| 3.3 | Mitigazione SSRF | ✅ (solo host costanti) · ⏳ validazione IP | `src/lib/turnstile.ts`, `src/lib/email.ts` |
-| 3.4 | Rate limiting degli endpoint critici | ✅ in memoria · ⏳ Redis con più repliche | `src/lib/security/rate-limit.ts` |
+| 3.1 | Validazione a schema rigoroso, chiavi extra rifiutate | ✅ (Zod strict) · ⏳ Pydantic | `frontend/landing/src/lib/contact-schema.ts` |
+| 3.2 | Query parametrizzate, anti-IDOR/BOLA, anti NoSQL-injection | ✅ Area Clienti (MongoDB, scenario B) | `backend/src/app/db.py`, `backend/src/app/schema.py`, `backend/tests/test_mongo.py` |
+| 3.3 | Mitigazione SSRF | ✅ (solo host costanti) · ⏳ validazione IP | `frontend/landing/src/lib/turnstile.ts`, `frontend/landing/src/lib/email.ts` |
+| 3.4 | Rate limiting degli endpoint critici | ✅ in memoria · ⏳ Redis con più repliche | `frontend/landing/src/lib/security/rate-limit.ts` |
 | 4 | Argon2id, cookie HttpOnly, rotazione refresh token | ⏳ | — |
 | 5 | Upload sicuri | ⏳ | — |
-| 6 | Container multi-stage, non-root, minimale | ✅ | `Dockerfile`, `.dockerignore`, `railway.json` |
+| 6 | Container multi-stage, non-root, minimale | ✅ | `frontend/landing/Dockerfile`, `frontend/landing/Dockerfile.dockerignore`, `frontend/landing/railway.json` |
 | 7 | Secret scanning, audit dipendenze, scansione immagine in CI | ✅ codice · 🔧 protezione del branch | `.github/workflows/security.yml`, `.github/dependabot.yml`, `.pre-commit-config.yaml` |
-| 8 | Log JSON strutturati, credenziali mascherate, audit trail | ✅ | `server/logger.mjs`, `src/lib/contact-handler.ts` |
+| 8 | Log JSON strutturati, credenziali mascherate, audit trail | ✅ | `frontend/landing/server/logger.mjs`, `frontend/landing/src/lib/contact-handler.ts` |
 
 ---
 
@@ -80,7 +80,18 @@ solo il sito: lo stack reale è più piccolo, e questo riduce la superficie d'at
   - MongoDB: `mongodb.railway.internal:27017` (via `${{MongoDB.MONGO_URL}}`)
   - Redis: `redis.railway.internal:6379` (via `${{Redis.REDIS_URL}}`)
 
-**Stato.** Il progetto non ha database. La regola si applica dal primo servizio dati aggiunto su Railway.
+**Stato.** Il sito pubblico non ha database. L'Area Clienti (`backend`) usa Redis sulla rete privata Railway e un
+**MongoDB esterno** (cluster condiviso tra i servizi NZT per avere un solo servizio database da pagare), che per
+definizione non è sulla rete privata Railway. Per quel cluster la regola diventa:
+
+- **un database per servizio** e utenti limitati a quel database (l'API usa un ruolo custom con sole operazioni
+  CRUD sulle proprie collection, schema applicato da un utente separato);
+- **IP Access List** del cluster limitata agli IP di uscita dei servizi (o private endpoint / peering), mai
+  `0.0.0.0/0`;
+- **TLS obbligatorio** con verifica di certificato e hostname e autenticazione SCRAM: l'API rifiuta di avviarsi in
+  produzione con un URI senza credenziali o con opzioni che indeboliscono TLS.
+
+Dettagli e verifiche: `docs/architettura_sicurezza_area_clienti.md` §16.
 
 ### 1.2 Origin IP Cloaking e WAF Cloudflare
 
@@ -99,11 +110,11 @@ quindi l'unica delle due opzioni realizzabile.
 
 **Implementazione — il perimetro applicativo**
 
-In produzione il processo non parte da `dist/server/entry.mjs` ma da **`server/index.mjs`**, che avvolge
+In produzione il processo non parte da `dist/server/entry.mjs` ma da **`frontend/landing/server/index.mjs`**, che avvolge
 l'handler di Astro. È il confine di fiducia: ogni richiesta, anche per una pagina statica o un file in
 `/_astro/`, passa da qui (il middleware di Astro, da solo, non vede i file statici).
 
-Controlli eseguiti nell'ordine (`server/create-server.mjs`):
+Controlli eseguiti nell'ordine (`frontend/landing/server/create-server.mjs`):
 
 | # | Controllo | Esito in caso di violazione |
 | :-: | :-- | :-- |
@@ -129,7 +140,7 @@ Dettagli che contano:
 - **Timeout anti-slowloris:** 15 s per gli header, 30 s per l'intera richiesta; keep-alive a 65 s, sopra i
   60 s dell'edge di Railway.
 
-**Implementazione — IP del client (`server/client-ip.mjs`)**
+**Implementazione — IP del client (`frontend/landing/server/client-ip.mjs`)**
 
 Gli header di inoltro sono testo che chiunque può scrivere. Prima di questo intervento il rate limit si
 fidava di `CF-Connecting-IP` e `X-Forwarded-For` senza condizioni: bastava cambiarne il valore a ogni
@@ -141,7 +152,7 @@ richiesta per aggirarlo. Ora ogni header è creduto solo se il proxy che lo scri
 | Processo su Railway, senza segreto verificato | `X-Real-IP` (impostato dall'edge di Railway) |
 | Nessun proxy fidato (locale, test) | indirizzo della connessione TCP |
 
-L'IP risolto arriva alla rotta API tramite `AsyncLocalStorage` (`server/request-context.mjs`), non tramite
+L'IP risolto arriva alla rotta API tramite `AsyncLocalStorage` (`frontend/landing/server/request-context.mjs`), non tramite
 un header: non esiste un canale che il client possa falsificare.
 
 > **Conseguenza operativa.** Con il proxy Cloudflare attivo ma senza `ORIGIN_VERIFY_SECRET`, l'IP visto è
@@ -171,7 +182,7 @@ migliore). Gli header, che in modalità statica il middleware non potrebbe appli
 perimetro di [§1.2](#12-origin-ip-cloaking-e-waf-cloudflare).
 
 **Anti-CSRF sull'API.** `checkOrigin` di Astro copre i form classici. L'endpoint aggiunge due controlli
-propri (`src/lib/security/request-guards.ts`):
+propri (`frontend/landing/src/lib/security/request-guards.ts`):
 
 - accetta solo `Content-Type: application/json` (un form HTML di un altro sito non può produrlo);
 - `Sec-Fetch-Site`, se presente, deve valere `same-origin`; `Origin`, se presente, deve avere lo stesso host
@@ -195,7 +206,7 @@ Tutte le risposte (pagine, asset, API, errori) includono:
 | `X-Permitted-Cross-Domain-Policies` | `none` |
 | `X-Request-Id` | identificativo della richiesta, lo stesso riportato nei log |
 
-Definizione unica in `server/security-headers.mjs`, usata sia dal perimetro sia da `src/middleware.ts`.
+Definizione unica in `frontend/landing/server/security-headers.mjs`, usata sia dal perimetro sia da `frontend/landing/src/middleware.ts`.
 
 **Content Security Policy delle pagine**
 
@@ -217,7 +228,7 @@ upgrade-insecure-requests                  (solo con NODE_ENV=production)
 
 - **Script: nessun `'unsafe-inline'`, nessun `'unsafe-eval'`.** Astro inserisce nell'HTML alcuni script
   inline (avvio delle isole React, lo script `nav-gate` del layout). Sono ammessi **solo per hash**:
-  l'integrazione `cspHashesIntegration` (`server/csp-hashes.mjs`), a fine build, legge ogni pagina
+  l'integrazione `cspHashesIntegration` (`frontend/landing/server/csp-hashes.mjs`), a fine build, legge ogni pagina
   generata, calcola lo SHA-256 di ogni blocco inline e scrive `dist/server/csp-hashes.json`; il server lo
   legge all'avvio. Se uno script inline cambia, il suo hash cambia al build successivo: non c'è nulla da
   mantenere a mano. Se il file manca o è alterato, il server non parte.
@@ -230,7 +241,7 @@ upgrade-insecure-requests                  (solo con NODE_ENV=production)
 **Vincoli per chi sviluppa**
 
 - Niente gestori di eventi inline (`onclick="…"`) e niente `javascript:` negli URL: la CSP li blocca.
-- Una nuova origine esterna (font, analytics, video) va aggiunta in `server/security-headers.mjs`, motivata
+- Una nuova origine esterna (font, analytics, video) va aggiunta in `frontend/landing/server/security-headers.mjs`, motivata
   qui e coperta da test.
 - Zod va importato da `@/lib/zod`, non da `zod`: quel modulo attiva la modalità _jitless_, senza la quale
   Zod 4 prova un `new Function()` che la CSP blocca e segnala.
@@ -256,7 +267,7 @@ upgrade-insecure-requests                  (solo con NODE_ENV=production)
   ```
 
 - I dati del modulo contatti non vengono mai resi come HTML: l'email è inviata come **solo testo**.
-- La pagina 404 è `src/pages/404.astro`: quella predefinita di Astro dichiarava il framework in uso.
+- La pagina 404 è `frontend/landing/src/pages/404.astro`: quella predefinita di Astro dichiarava il framework in uso.
 
 ---
 
@@ -270,7 +281,7 @@ vincolanti per l'Area Clienti. I principi sono gli stessi; cambia lo strumento.
 **Regola.** Nessun dato grezzo passa alla logica o a un servizio esterno senza validazione a schema. Le
 chiavi non previste fanno fallire la richiesta.
 
-**Implementazione attuale — ✅ (`src/lib/contact-schema.ts`, Zod 4)**
+**Implementazione attuale — ✅ (`frontend/landing/src/lib/contact-schema.ts`, Zod 4)**
 
 - `z.strictObject`: una chiave extra (`isAdmin`, `role`, …) produce `400`.
 - Solo scalari tipizzati, con lunghezza massima; `service` è un elenco chiuso di valori.
@@ -323,6 +334,9 @@ async def get_user_order(db: AsyncSession, order_id: uuid.UUID, current_user_id:
 - **NoSQL operator injection:** mai accettare dizionari liberi (`dict`) nei filtri di query.
 - Validare i tipi con Pydantic garantendo parametri scalari (`str`, `int`), così che l'utente non possa
   iniettare operatori come `{"$gt": ""}` o `{"$ne": null}`.
+- **Applicato nell'Area Clienti (`backend`, PyMongo async):** filtri costruiti solo da valori tipizzati lato
+  server, nessun operatore JavaScript lato server, validatori `$jsonSchema` strict su ogni collection, `_id` UUID
+  (non enumerabili); verificato da `backend/tests/test_mongo.py`.
 
 ```python
 # VULNERABILE:
@@ -390,7 +404,7 @@ def validate_outgoing_url(target_url: str):
 
 ### 3.4 Rate limiting
 
-**Implementazione attuale — ✅ (`src/lib/security/rate-limit.ts`)**
+**Implementazione attuale — ✅ (`frontend/landing/src/lib/security/rate-limit.ts`)**
 
 | Limite | Valore | Scopo |
 | :-- | :-- | :-- |
@@ -500,12 +514,12 @@ con file system in sola lettura.
 
 ## 6. Container Hardening (Docker su Railway) — ✅
 
-Il deploy su Railway usa il `Dockerfile` del repository (`railway.json` → `builder: DOCKERFILE`).
+Il deploy su Railway usa il `frontend/landing/Dockerfile` del repository (`frontend/landing/railway.json` → `builder: DOCKERFILE`).
 
 | Misura | Come |
 | :-- | :-- |
 | Multi-stage | Stadio di build con pnpm e toolchain; stadio finale con il solo risultato |
-| Nessuna dipendenza npm a runtime | Il bundle server è autosufficiente (`vite.ssr.noExternal`): nell'immagine finale ci sono solo `dist/` e `server/`, senza `node_modules` |
+| Nessuna dipendenza npm a runtime | Il bundle server è autosufficiente (`vite.ssr.noExternal`): nell'immagine finale ci sono solo `dist/` e `frontend/landing/server/`, senza `node_modules` |
 | Nessun gestore di pacchetti | `npm`, `npx`, `corepack`, `yarn` rimossi dall'immagine finale |
 | Base minimale | Stadio finale su `node:22-alpine` |
 | Immagini fissate per digest | `FROM …@sha256:…`; le aggiorna Dependabot |
@@ -573,7 +587,7 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--no-server-
 - **Gitleaks** è uno step bloccante della pipeline (`.github/workflows/security.yml`, sull'intera
   cronologia) e un hook pre-commit (`.pre-commit-config.yaml`; attivazione per clone:
   `pipx install pre-commit && pre-commit install`).
-- `.gitignore` esclude `.env` e ogni `.env.*` tranne `.env.example`, che contiene solo le chiavi di test
+- `.gitignore` esclude `.env` e ogni `.env.*` tranne `frontend/landing/.env.example`, che contiene solo le chiavi di test
   pubbliche di Cloudflare.
 - I segreti vivono solo nelle Variables di Railway. Elenco e scopo:
 
@@ -593,7 +607,7 @@ pubblicata dopo l'ultimo commit emerge anche se il codice non cambia):
 | :-- | :-- |
 | `secrets` | Gitleaks sulla cronologia completa |
 | `app` | `pnpm audit --audit-level=high` · ESLint · `astro check` + build · test unitari e di integrazione |
-| `container` | Trivy sul `Dockerfile` · build dell'immagine · Trivy sull'immagine (alte e critiche) · prova che l'origine risponde `403` senza segreto e che il processo non è root |
+| `container` | Trivy sul `frontend/landing/Dockerfile` · build dell'immagine · Trivy sull'immagine (alte e critiche) · prova che l'origine risponde `403` senza segreto e che il processo non è root |
 
 Il workflow ha permessi di sola lettura (`contents: read`) e non conserva le credenziali del checkout.
 
@@ -603,16 +617,16 @@ Il workflow ha permessi di sola lettura (`contents: read`) e non conserva le cre
 
 **Test di sicurezza** (`pnpm test`): 111 test.
 
-- `tests/unit/` — schema, rate limiter, controlli sulla richiesta, IP del client, verifica dell'origine,
+- `frontend/landing/tests/unit/` — schema, rate limiter, controlli sulla richiesta, IP del client, verifica dell'origine,
   configurazione, logger, header, hash CSP, Turnstile, email, handler dei contatti, perimetro.
-- `tests/integration/` — avvia il vero server di produzione sul build in `dist/` e verifica, tra l'altro,
+- `frontend/landing/tests/integration/` — avvia il vero server di produzione sul build in `dist/` e verifica, tra l'altro,
   che **ogni** script e stile inline di **ogni** pagina sia coperto dalla CSP servita.
 
 ---
 
 ## 8. Logging e Audit Trail — ✅
 
-- **Structured logging:** una riga JSON per evento (`server/logger.mjs`), su stdout/stderr, leggibile dai
+- **Structured logging:** una riga JSON per evento (`frontend/landing/server/logger.mjs`), su stdout/stderr, leggibile dai
   log di Railway e da qualsiasi aggregatore (Loki, Datadog).
 - **Mascheramento delle credenziali:** prima della scrittura ogni campo il cui nome richiama `password`,
   `token`, `authorization`, `secret`, `cookie`, `api_key`, `credit_card`, `cvv`, `origin-verify` viene
@@ -650,7 +664,7 @@ e permessi (RBAC) e ogni `403` su accesso a risorse altrui (IDOR).
 - Aggiornamento del 2026-11-15: **Astro 5.18 → 7.4**, `@astrojs/node` 9 → 11, `@astrojs/react` 4 → 7,
   Zod 3 → 4. `pnpm audit` sulle dipendenze di produzione è passato da **24 vulnerabilità** (1 critica,
   7 alte) a zero alte o critiche.
-- L'SDK `resend` è stato sostituito da una chiamata `fetch` diretta (`src/lib/email.ts`): meno pacchetti
+- L'SDK `resend` è stato sostituito da una chiamata `fetch` diretta (`frontend/landing/src/lib/email.ts`): meno pacchetti
   transitivi da tenere aggiornati.
 - `pnpm install --frozen-lockfile` in CI e nel Dockerfile: si installa solo ciò che è nel lockfile.
 - `onlyBuiltDependencies` in `package.json`: solo `esbuild` e `sharp` possono eseguire script di installazione.
@@ -725,7 +739,7 @@ Azioni che il codice non può compiere. Finché restano aperte, la protezione co
 
 **Scadenze**
 
-- [ ] `public/.well-known/security.txt`: campo `Expires` da rinnovare entro il **2027-11-15**.
+- [ ] `frontend/landing/public/.well-known/security.txt`: campo `Expires` da rinnovare entro il **2027-11-15**.
 - [ ] Rotazione di `ORIGIN_VERIFY_SECRET`, `RESEND_API_KEY`, `TURNSTILE_SECRET_KEY` almeno annuale e a ogni
       sospetto di esposizione.
 
@@ -797,4 +811,6 @@ Requisiti obbligatori per ogni frammento di codice che generi:
 
 | Data | Modifica |
 | :-- | :-- |
-| 2026-11-15 | **Prima stesura e prima applicazione del blueprint.** Perimetro di produzione `server/index.mjs` (verifica dell'origine, allowlist di metodi e path, limiti sul corpo, IP da proxy verificati). Security header e CSP a hash su ogni risposta. API contatti: schema strict, controllo stessa origine, rate limiter a memoria limitata con tetto globale, log JSON senza dati personali. Aggiornamento Astro 5 → 7 e dipendenze vulnerabili; rimozione dell'SDK Resend. Container multi-stage non-root su Alpine senza `node_modules`. Pipeline `Security` (Gitleaks, audit, test, Trivy), Dependabot, hook pre-commit. Pagina 404, `security.txt`. 111 test di sicurezza. |
+| 2026-11-18 | **Hardening, fix bug e supporto Cloudflare Pages:** rate limiter `rate-limit.ts` reso `O(1)` su chiavi scadute con reinserimento in coda delle chiavi limitate; normalizzazione `::ffff:` case-insensitive in `client-ip.mjs`; `/healthz` esatto con controllo body GET; `security.allowedDomains` in `astro.config.mjs`; reset automatico Turnstile su scadenza/timeout + cancellazione body `fetch` non letti; `docker-compose.yml` vincolato a `127.0.0.1`; generazione automatica di `dist/client/_headers` e aggiunta Cloudflare Pages Function `functions/api/contact.ts` + `wrangler.toml` per deploy statico a costo \$0; CI `Security` e Dependabot estesi a tutto il monorepo (`backend`, `portal`, `admin`, `ui`). |
+| 2026-11-18 | **Area Clienti: database da PostgreSQL a MongoDB esterno** (decisione: un solo servizio database condiviso tra i servizi NZT). §1.1: regola di isolamento per un cluster esterno (database per servizio, IP Access List, TLS verificato obbligatorio). §3.2 scenario B applicato. Dettagli nel documento dell'Area Clienti (§5, §9, §16, §24.2). |
+| 2026-11-15 | **Prima stesura e prima applicazione del blueprint.** Perimetro di produzione `frontend/landing/server/index.mjs` (verifica dell'origine, allowlist di metodi e path, limiti sul corpo, IP da proxy verificati). Security header e CSP a hash su ogni risposta. API contatti: schema strict, controllo stessa origine, rate limiter a memoria limitata con tetto globale, log JSON senza dati personali. Aggiornamento Astro 5 → 7 e dipendenze vulnerabili; rimozione dell'SDK Resend. Container multi-stage non-root su Alpine senza `node_modules`. Pipeline `Security` (Gitleaks, audit, test, Trivy), Dependabot, hook pre-commit. Pagina 404, `security.txt`. 111 test di sicurezza. |

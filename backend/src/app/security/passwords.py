@@ -1,0 +1,121 @@
+"""Argon2id hashing (spec §4.1) + timing-attack mitigation (spec §4.2).
+
+Hash/verify run in a worker thread (never on the event loop) and are bounded by an
+asyncio.Semaphore so that a burst of logins cannot exhaust CPU/RAM (each call needs
+64 MiB). See D-A9.
+
+The queue in front of the semaphore is BOUNDED (review L4): at most ``max_queue`` calls
+may wait for a slot. Beyond that the call fails fast with ``PasswordHasherBusyError``
+(HTTP 503 + Retry-After) instead of queueing without limit, so a flood of bogus logins
+cannot push every legitimate login into multi-second latencies. The per-IP/per-email
+rate limits still run BEFORE any hashing; this bound is the global backstop."""
+
+from __future__ import annotations
+
+import asyncio
+import re
+from collections.abc import Callable
+
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
+from argon2.low_level import Type
+
+BUSY_RETRY_AFTER_SECONDS = 1
+
+ARGON2_MEMORY_COST_KIB = 65536
+ARGON2_TIME_COST = 3
+ARGON2_PARALLELISM = 4
+ARGON2_SALT_LEN = 16
+ARGON2_HASH_LEN = 32
+
+PASSWORD_MIN_LENGTH = 12
+PASSWORD_MAX_LENGTH = 128
+
+_DIGIT = re.compile(r"\d")
+_LETTER = re.compile(r"[^\W\d_]")
+_SPECIAL = re.compile(r"[^\w\s]|_")
+
+
+class PasswordHasherBusyError(Exception):
+    """Too many password hashing/verification calls are already queued."""
+
+    def __init__(self, retry_after: int = BUSY_RETRY_AFTER_SECONDS) -> None:
+        super().__init__("password hashing queue full")
+        self.retry_after = retry_after
+
+
+def password_policy_errors(password: str) -> list[str]:
+    """Spec §8.1: min 12 chars, special characters, digits (+ a letter, + max length cap)."""
+    errors: list[str] = []
+    if len(password) < PASSWORD_MIN_LENGTH:
+        errors.append(f"must be at least {PASSWORD_MIN_LENGTH} characters")
+    if len(password) > PASSWORD_MAX_LENGTH:
+        errors.append(f"must be at most {PASSWORD_MAX_LENGTH} characters")
+    if not _DIGIT.search(password):
+        errors.append("must contain at least one digit")
+    if not _SPECIAL.search(password):
+        errors.append("must contain at least one special character")
+    if not _LETTER.search(password):
+        errors.append("must contain at least one letter")
+    return errors
+
+
+class PasswordService:
+    def __init__(self, max_concurrency: int, max_queue: int = 8) -> None:
+        # PasswordHasher draws the salt from os.urandom(salt_len) for every hash.
+        self._hasher = PasswordHasher(
+            time_cost=ARGON2_TIME_COST,
+            memory_cost=ARGON2_MEMORY_COST_KIB,
+            parallelism=ARGON2_PARALLELISM,
+            hash_len=ARGON2_HASH_LEN,
+            salt_len=ARGON2_SALT_LEN,
+            type=Type.ID,
+        )
+        self._semaphore = asyncio.Semaphore(max_concurrency)
+        self._max_concurrency = max_concurrency
+        self._max_queue = max_queue
+        # Calls admitted (running + waiting). Mutated only on the event loop thread.
+        self._admitted = 0
+        # Fixed dummy hash with identical parameters (spec §4.2), pre-computed so
+        # startup incurs 0 ms CPU and 0 MiB memory spike on cold starts.
+        self._dummy_hash = (
+            "$argon2id$v=19$m=65536,t=3,p=4$"
+            "c29tZXJhbmRvbXNhbHQxNg$"
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        )
+        self.dummy_verifications = 0  # observable in tests
+
+    @property
+    def hasher(self) -> PasswordHasher:
+        return self._hasher
+
+    @property
+    def admitted(self) -> int:
+        return self._admitted
+
+    async def _run_bounded[T](self, fn: Callable[..., T], *args: str) -> T:
+        if self._admitted >= self._max_concurrency + self._max_queue:
+            raise PasswordHasherBusyError
+        self._admitted += 1
+        try:
+            async with self._semaphore:
+                return await asyncio.to_thread(fn, *args)
+        finally:
+            self._admitted -= 1
+
+    async def hash(self, password: str) -> str:
+        return await self._run_bounded(self._hasher.hash, password)
+
+    def _verify_sync(self, password_hash: str, password: str) -> bool:
+        try:
+            return self._hasher.verify(password_hash, password)
+        except (VerifyMismatchError, VerificationError, InvalidHashError):
+            return False
+
+    async def verify(self, password_hash: str, password: str) -> bool:
+        return await self._run_bounded(self._verify_sync, password_hash, password)
+
+    async def dummy_verify(self, password: str) -> None:
+        """Burn the same CPU/memory as a real verification; result is discarded."""
+        self.dummy_verifications += 1
+        await self.verify(self._dummy_hash, password)

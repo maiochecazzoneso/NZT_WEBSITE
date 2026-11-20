@@ -36,7 +36,7 @@ jobs:
         run: docker run --rm -v "$PWD:/repo:ro" "$GITLEAKS_IMAGE" git /repo --redact --no-banner
 
   app:
-    name: Dipendenze, lint, tipi, build, test
+    name: Landing — dipendenze, lint, tipi, build, test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,21 +58,103 @@ jobs:
       - name: Test di sicurezza (unitari e di integrazione)
         run: pnpm test
 
-  container:
-    name: Immagine container (Trivy)
+  frontend-apps:
+    name: Portal, Admin & UI — lint, tipi, build, test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Configurazione del Dockerfile
-        run: docker run --rm -v "$PWD:/repo:ro" "$TRIVY_IMAGE" config --exit-code 1 /repo/Dockerfile
-      - name: Build dell'immagine
-        run: docker build --build-arg PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA -t nzt-web:ci .
-      - name: Vulnerabilità dell'immagine (alte e critiche)
-        run: >
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE"
-          image --severity HIGH,CRITICAL --exit-code 1 nzt-web:ci
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Installa le dipendenze (lockfile bloccato)
+        run: pnpm install --frozen-lockfile
+      - name: Lint (@nzt/ui, @nzt/portal, @nzt/admin)
+        run: |
+          pnpm --filter @nzt/ui lint
+          pnpm --filter @nzt/portal lint
+          pnpm --filter @nzt/admin lint
+      - name: Typecheck (@nzt/ui)
+        run: pnpm --filter @nzt/ui typecheck
+      - name: Build (@nzt/portal, @nzt/admin)
+        run: |
+          pnpm build:portal
+          pnpm build:admin
+      - name: Test (@nzt/portal, @nzt/admin)
+        run: |
+          pnpm test:portal
+          pnpm test:admin
+
+  backend:
+    name: Backend API — ruff, mypy, pytest, pip-audit, bandit
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:8.0
+        ports: ['57017:27017']
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand(\"ping\").ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ['56379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+      - name: Installa dipendenze backend
+        working-directory: backend
+        run: uv sync --frozen
+      - name: Lint e tipi (ruff + mypy)
+        working-directory: backend
+        run: |
+          uv run ruff check src tests
+          uv run mypy src
+      - name: Test suite (pytest)
+        working-directory: backend
+        env:
+          NZT_TEST_MONGO_URI: mongodb://127.0.0.1:57017/?directConnection=true
+          NZT_TEST_REDIS_URL: redis://127.0.0.1:56379/15
+        run: uv run pytest
+      - name: Audit dipendenze e SAST (pip-audit + bandit)
+        working-directory: backend
+        run: |
+          uv run --with pip-audit pip-audit
+          uv run --with bandit bandit -r src/app -ll
+
+  container:
+    name: Immagini container (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Configurazione dei Dockerfile
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" "$TRIVY_IMAGE" config --exit-code 1 /repo/frontend/landing/Dockerfile
+          docker run --rm -v "$PWD:/repo:ro" "$TRIVY_IMAGE" config --exit-code 1 /repo/frontend/deploy/web.Dockerfile
+          docker run --rm -v "$PWD:/repo:ro" "$TRIVY_IMAGE" config --exit-code 1 /repo/backend/Dockerfile
+      - name: Build delle immagini
+        run: |
+          docker build -f frontend/landing/Dockerfile --build-arg PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA -t nzt-web:ci .
+          docker build -f frontend/deploy/web.Dockerfile -t nzt-portal-web:ci .
+          docker build -f backend/Dockerfile -t nzt-api:ci backend
+      - name: Vulnerabilità delle immagini (alte e critiche)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" image --severity HIGH,CRITICAL --exit-code 1 nzt-web:ci
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" image --severity HIGH,CRITICAL --exit-code 1 nzt-portal-web:ci
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" image --severity HIGH,CRITICAL --exit-code 1 nzt-api:ci
       - name: L'origine risponde solo con il segreto
         run: |
           secret=$(openssl rand -hex 32)

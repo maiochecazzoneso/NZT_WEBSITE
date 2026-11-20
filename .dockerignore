@@ -1,24 +1,31 @@
-# Nulla di ciò che segue deve entrare nel contesto di build (né quindi nell'immagine)
+# Nulla di ciò che segue deve entrare nel contesto di build (né quindi nell'immagine).
+# Vale per le immagini con contesto nella radice: portale, dashboard, container web (frontend/*/Dockerfile,
+# frontend/deploy/web.Dockerfile). Il sito pubblico ha il suo frontend/landing/Dockerfile.dockerignore.
 .git
 .github
-node_modules
-dist
-.astro
-coverage
+**/node_modules
+**/dist
+**/.astro
+**/coverage
 
 # Segreti e configurazione locale
-.env
-.env.*
-!.env.example
+**/.env
+**/.env.*
+!**/.env.example
 
 # Materiale non necessario al build
 docs
-shots
-tests
-*.md
+**/*.md
 docker-compose.yml
-Dockerfile
+**/Dockerfile
+**/*.Dockerfile
+**/*.dockerignore
 .dockerignore
 .pre-commit-config.yaml
 .idea
-.DS_Store
+**/.DS_Store
+
+# Backend e database hanno immagini proprie
+backend
+database
+frontend/landing

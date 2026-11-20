@@ -1,0 +1,32 @@
+# frontend/portal/deploy/Caddyfile — esempio di virtual host Caddy per il portale statico.
+# DOCUMENTAZIONE / riferimento di deploy (nessun deploy in questo round). Header identici a
+# csp.config.ts → securityHeaders("https://api.nztsolutions.it"), verificati da tests/csp.test.ts.
+clienti.nztsolutions.it {
+	root * /srv/nzt-portal
+	encode zstd gzip
+
+	header {
+		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src https://api.nztsolutions.it; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types 'none'"
+		X-Robots-Tag "noindex, nofollow, noarchive"
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		-Server
+	}
+
+	handle /assets/* {
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	handle {
+		header Cache-Control "no-cache"
+		# SPA: le rotte client (/accedi, /registrazione, /auth/google/callback…) servono index.html
+		try_files {path} /index.html
+		file_server
+	}
+}

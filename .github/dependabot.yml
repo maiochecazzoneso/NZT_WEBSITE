@@ -13,9 +13,25 @@ updates:
         dependency-type: development
         update-types: [minor, patch]
 
-  # Immagini base del Dockerfile (fissate per digest)
+  - package-ecosystem: uv
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # Immagini base dei Dockerfile
   - package-ecosystem: docker
-    directory: /
+    directory: /frontend/landing
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /frontend/deploy
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /backend
     schedule:
       interval: weekly
 
