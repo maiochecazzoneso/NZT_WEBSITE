@@ -26,7 +26,7 @@
     "@nanostores/react": "^0.7.3",
     "@react-three/drei": "^10.0.0",
     "@react-three/fiber": "^9.0.0",
-    "@tailwindcss/vite": "^4.0.0",
+    "@tailwindcss/vite": "^4.3.5",
     "astro": "^7.4.12",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
