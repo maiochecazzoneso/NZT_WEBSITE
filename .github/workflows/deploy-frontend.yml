@@ -1,0 +1,101 @@
+# Pubblicazione automatica dei tre frontend su Cloudflare Pages a ogni push.
+#   implementazione-area-clienti -> progetti *-test, API di test (Railway, ambiente test)
+#   (main -> produzione: da aggiungere quando ci saranno dominio e progetti di produzione)
+# Segreti richiesti nel repository (Settings -> Secrets and variables -> Actions):
+#   CLOUDFLARE_API_TOKEN  (permesso: Account -> Cloudflare Pages -> Edit)
+#   CLOUDFLARE_ACCOUNT_ID
+# Variabile facoltativa (stessa pagina, scheda Variables): TEST_API_BASE_URL.
+name: Deploy frontend
+
+on:
+  push:
+    branches: [implementazione-area-clienti]
+    paths:
+      - 'frontend/**'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  WRANGLER: pnpm dlx wrangler@4.165.0
+  PRODUCTION_BRANCH: implementazione-area-clienti
+  API_BASE_URL: ${{ vars.TEST_API_BASE_URL || 'https://api-test-d8d23d2f.up.railway.app' }}
+
+jobs:
+  deploy:
+    name: ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: sito
+            project: nzt-sito-test
+            build: pnpm build
+            workdir: frontend/landing
+            output: dist/client
+          - app: portale
+            project: nzt-portal-test
+            build: pnpm build:portal
+            workdir: .
+            output: frontend/portal/dist
+          - app: admin
+            project: nzt-admin-test
+            build: pnpm build:admin
+            workdir: .
+            output: frontend/admin/dist
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    defaults:
+      run:
+        shell: bash # -eo pipefail: un errore di wrangler non viene nascosto da `tee`
+    steps:
+      - name: Controlla i segreti Cloudflare
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Mancano i segreti CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID (Settings -> Secrets and variables -> Actions)"
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Installa le dipendenze
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        env:
+          # portale/admin: origin dell'API nel bundle e nella CSP di dist/_headers
+          VITE_API_BASE_URL: ${{ env.API_BASE_URL }}
+          NZT_EMIT_PAGES_HEADERS: '1'
+          # sito: chiave pubblica Turnstile (default: chiave di test ufficiale Cloudflare)
+          PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.TEST_TURNSTILE_SITE_KEY || '1x00000000000000000000AA' }}
+        run: ${{ matrix.build }}
+      - name: Crea il progetto Pages se non esiste
+        run: |
+          if ! $WRANGLER pages project list 2>/dev/null | grep -qw "${{ matrix.project }}"; then
+            $WRANGLER pages project create "${{ matrix.project }}" --production-branch "$PRODUCTION_BRANCH"
+          fi
+      - name: Pubblica
+        working-directory: ${{ matrix.workdir }}
+        # Sito: da frontend/landing wrangler legge functions/ (POST /api/contact) e wrangler.toml
+        # (nodejs_compat). Portale/admin: dalla radice (nessuna configurazione wrangler).
+        run: |
+          $WRANGLER pages deploy "${{ matrix.output }}" \
+            --project-name "${{ matrix.project }}" \
+            --branch "${GITHUB_REF_NAME}" \
+            --commit-hash "${GITHUB_SHA}" | tee deploy.log
+          url=$(grep -Eo 'https://[a-zA-Z0-9.-]+\.pages\.dev' deploy.log | tail -1)
+          echo "### ${{ matrix.app }}: ${url} (progetto ${{ matrix.project }})" >> "$GITHUB_STEP_SUMMARY"

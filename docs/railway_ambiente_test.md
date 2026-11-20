@@ -61,3 +61,16 @@ nell'ambiente **Preview**. Senza dominio proprio l'API di test si raggiunge su
 `https://api-test-d8d23d2f.up.railway.app` (le origin `*.pages.dev` vanno aggiunte a
 `NZT_PORTAL_ORIGINS` / `NZT_ADMIN_ORIGINS`); la sessione non sopravvive al ricaricamento perché i
 domini `pages.dev` e `up.railway.app` sono siti diversi (cookie `SameSite=Strict`).
+
+### Pubblicazione automatica dei frontend (GitHub Actions → Cloudflare Pages)
+
+`.github/workflows/deploy-frontend.yml`: a ogni push su `implementazione-area-clienti` che tocca
+`frontend/**` compila e pubblica i tre siti sui progetti Pages `nzt-sito-test`, `nzt-portal-test`,
+`nzt-admin-test` (creati al primo giro). Il sito pubblica anche la Pages Function `POST /api/contact`.
+Gli indirizzi finali compaiono nel riepilogo di ogni esecuzione (scheda *Actions*).
+
+Configurazione una tantum su GitHub (*Settings → Secrets and variables → Actions*):
+`CLOUDFLARE_API_TOKEN` (permesso *Account → Cloudflare Pages → Edit*) e `CLOUDFLARE_ACCOUNT_ID`.
+Facoltative (scheda *Variables*): `TEST_API_BASE_URL`, `TEST_TURNSTILE_SITE_KEY`.
+Segreti del modulo contatti (`TURNSTILE_SECRET_KEY`, `RESEND_API_KEY`, …): nel progetto Pages
+`nzt-sito-test` → *Settings → Variables and Secrets*.
