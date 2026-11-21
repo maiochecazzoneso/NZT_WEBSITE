@@ -11,6 +11,7 @@ import pytest
 
 from app.db import Collections
 from app.deps import AuthenticatedUser, Entitlement, has_active_entitlement
+from app.security.tokens import REALM_PORTAL
 from app.services.storage import Product, artifact_catalog
 from tests.conftest import DEFAULT_IP, download, grant, one, only_user_id, register
 from tests.helpers import DPoPKey
@@ -108,6 +109,7 @@ def test_require_entitlement_helper():
         email="e@d.com",
         jkt="x",
         role="customer",
+        aud=REALM_PORTAL,
         is_verified=True,
         entitlements=(
             Entitlement("nzt_suite", True, None),

@@ -241,7 +241,8 @@ async def test_resource_token_without_cnf(
     )
     resp = await download(client, key, no_cnf)
     assert resp.status_code == 401
-    assert "cnf" in resp.headers["www-authenticate"]
+    # Generic error: the reason (missing cnf) is not disclosed to the client.
+    assert 'error="invalid_token"' in resp.headers["www-authenticate"]
 
 
 async def test_resource_bearer_scheme_rejected(client: httpx.AsyncClient, mongo: Collections):

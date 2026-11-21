@@ -10,7 +10,8 @@ import {
 } from '../src/lib/emailVerification';
 import { API } from './helpers/fakeApi';
 
-const TOKEN = 'Abc_DEF-ghiJKLmnoPQRstuVWXyz0123456789abcde';
+// Token fittizio di 43 caratteri base64url (con '_' e '-'), costruito: nessuna stringa che sembri un segreto.
+const TOKEN = `${'a'.repeat(20)}_-${'B'.repeat(21)}`;
 
 describe('verification link (token in the URL fragment)', () => {
   it('reads the token once and strips the fragment with history.replaceState', () => {

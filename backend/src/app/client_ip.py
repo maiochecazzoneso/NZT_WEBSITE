@@ -27,7 +27,7 @@ from starlette.requests import Request
 IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
-_UNKNOWN = "0.0.0.0"  # noqa: S104 - placeholder for audit rows when no peer is known
+_UNKNOWN = "0.0.0.0"  # noqa: S104  # nosec B104 - audit placeholder (no peer known), not a bind address
 MAX_FORWARDED_HOPS = 32
 _MAX_HEADER_CHARS = 8192  # parsing budget: only the rightmost part is ever needed
 

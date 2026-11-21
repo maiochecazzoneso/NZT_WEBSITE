@@ -92,8 +92,13 @@ jobs:
     name: Backend API — ruff, mypy, pytest, pip-audit, bandit
     runs-on: ubuntu-latest
     services:
+      # Con autenticazione, come Atlas: i test usano gli utenti a privilegio minimo nzt_app /
+      # nzt_migrator creati da database/create_roles.py (passo "Utenti MongoDB di prova").
       mongo:
         image: mongo:8.0
+        env:
+          MONGO_INITDB_ROOT_USERNAME: root
+          MONGO_INITDB_ROOT_PASSWORD: root_test
         ports: ['57017:27017']
         options: >-
           --health-cmd "mongosh --quiet --eval 'db.adminCommand(\"ping\").ok'"
@@ -116,6 +121,17 @@ jobs:
       - name: Installa dipendenze backend
         working-directory: backend
         run: uv sync --frozen
+      - name: Utenti MongoDB di prova (privilegio minimo) e TTL monitor spento
+        working-directory: backend
+        env:
+          NZT_MONGODB_ROOT_URI: mongodb://root:root_test@127.0.0.1:57017/?authSource=admin&directConnection=true
+          NZT_DB_NAME: nzt_test
+          NZT_MIGRATOR_PASSWORD: nzt_migrator_test
+          NZT_APP_PASSWORD: nzt_app_test
+        run: |
+          uv run python ../database/create_roles.py
+          # i test scadono documenti apposta: non devono sparire durante il test
+          uv run python -c "import os, pymongo; pymongo.MongoClient(os.environ['NZT_MONGODB_ROOT_URI']).admin.command('setParameter', 1, ttlMonitorEnabled=False)"
       - name: Lint e tipi (ruff + mypy)
         working-directory: backend
         run: |
@@ -153,7 +169,8 @@ jobs:
       - name: Vulnerabilità delle immagini (alte e critiche)
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" image --severity HIGH,CRITICAL --exit-code 1 nzt-web:ci
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" image --severity HIGH,CRITICAL --exit-code 1 nzt-portal-web:ci
+          # Caddy: eccezioni motivate e con scadenza in .trivyignore.caddy (solo per questa immagine)
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/repo:ro" "$TRIVY_IMAGE" image --severity HIGH,CRITICAL --exit-code 1 --ignorefile /repo/.trivyignore.caddy nzt-portal-web:ci
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" image --severity HIGH,CRITICAL --exit-code 1 nzt-api:ci
       - name: L'origine risponde solo con il segreto
         run: |

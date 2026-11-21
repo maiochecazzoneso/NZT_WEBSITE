@@ -1,0 +1,11 @@
+# Falsi positivi di Gitleaks nella CRONOLOGIA del repository (commit già pubblicati), verificati a mano:
+# nessun segreto reale. Nei file attuali le stringhe sono state rimosse (token del test costruito a
+# runtime, esempi JWT sostituiti da "<JWT di accesso>"): restano solo nei vecchi commit, che non si
+# riscrivono. Formato <commit>:<file>:<regola>:<riga>: sono ignorate solo queste 4 occorrenze storiche,
+# il controllo resta attivo su tutto il resto, compresi i commit futuri.
+# - d52aa4f: token di verifica email finto nel test del portale
+# - f6b9ec7: esempi di risposta con access_token troncato ("eyJhbGciOiJSUzI1NiIs...") nelle specifiche
+d52aa4f4ef6060d89c027c292938da4410615cc8:apps/portal/tests/emailVerification.test.ts:generic-api-key:13
+f6b9ec757777077a0dc01755e4ab691e6a8a12bc:docs/specifiche_architetturali_area_clienti_nzt_solutions.md:generic-api-key:277
+f6b9ec757777077a0dc01755e4ab691e6a8a12bc:docs/specifiche_architetturali_area_clienti_nzt_solutions.md:generic-api-key:296
+f6b9ec757777077a0dc01755e4ab691e6a8a12bc:docs/specifiche_architetturali_area_clienti_nzt_solutions.md:generic-api-key:318

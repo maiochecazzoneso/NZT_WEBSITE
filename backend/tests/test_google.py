@@ -82,7 +82,7 @@ async def test_authorize_url_and_state_cookie(client: httpx.AsyncClient):
     sealed = _state_cookie(resp)
     assert cookies[0] == (
         f"__Secure-oauth-state={sealed}; HttpOnly; Secure; SameSite=Lax; "
-        "Path=/api/v1/auth; Max-Age=300"
+        "Path=/api/v1/auth/google/callback; Max-Age=300"
     )
     # Cookie is encrypted: neither the state nor the verifier is visible.
     assert params["state"] not in sealed

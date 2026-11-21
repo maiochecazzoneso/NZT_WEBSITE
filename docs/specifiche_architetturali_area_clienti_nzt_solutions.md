@@ -274,7 +274,7 @@ L'eseguibile del Launcher rappresenta il core software e non deve mai essere esp
 * **Response `201 Created`:**
   ```json
   {
-    "access_token": "eyJhbGciOiJSUzI1NiIs...",
+    "access_token": "<JWT di accesso>",
     "token_type": "DPoP",
     "expires_in": 600
   }
@@ -293,7 +293,7 @@ L'eseguibile del Launcher rappresenta il core software e non deve mai essere esp
 * **Response `200 OK`:**
   ```json
   {
-    "access_token": "eyJhbGciOiJSUzI1NiIs...",
+    "access_token": "<JWT di accesso>",
     "token_type": "DPoP",
     "expires_in": 600
   }
@@ -315,7 +315,7 @@ L'eseguibile del Launcher rappresenta il core software e non deve mai essere esp
 * **Response `200 OK`:**
   ```json
   {
-    "access_token": "eyJhbGciOiJSUzI1NiIs...",
+    "access_token": "<JWT di accesso>",
     "token_type": "DPoP",
     "expires_in": 600
   }
