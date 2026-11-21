@@ -1,6 +1,6 @@
 # Un solo container Caddy per portale clienti + dashboard admin (due siti statici, due domini).
 # Meno servizi = meno costi su Railway. Contesto di build: radice del monorepo.
-FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS build
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS build
 ENV CI=true COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
 WORKDIR /repo
