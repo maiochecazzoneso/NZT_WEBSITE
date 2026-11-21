@@ -130,6 +130,7 @@ def test_production_defaults_mongodb_tls_and_rejects_disable():
         "mail_backend": "resend",
         "resend_api_key": "re_test_key",
         "mail_from": "NZT Solutions <noreply@nztsolutions.it>",
+        "redis_url": "redis://default:x@redis.railway.internal:6379/0",
     }
     ok = make_settings(**common, mongodb_tls=None)
     assert ok.effective_mongodb_tls is True

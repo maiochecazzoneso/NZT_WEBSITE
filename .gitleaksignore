@@ -1,0 +1,8 @@
+# Falsi positivi di Gitleaks verificati a mano (nessun segreto reale). Un'impronta per riga:
+# <commit>:<file>:<regola>:<riga>. Solo queste occorrenze sono ignorate, il controllo resta attivo.
+# - test del portale: token di verifica email finto (stringa di prova)
+# - specifiche: esempi di risposta con access_token troncato ("eyJhbGciOiJSUzI1NiIs...")
+d52aa4f4ef6060d89c027c292938da4410615cc8:apps/portal/tests/emailVerification.test.ts:generic-api-key:13
+f6b9ec757777077a0dc01755e4ab691e6a8a12bc:docs/specifiche_architetturali_area_clienti_nzt_solutions.md:generic-api-key:277
+f6b9ec757777077a0dc01755e4ab691e6a8a12bc:docs/specifiche_architetturali_area_clienti_nzt_solutions.md:generic-api-key:296
+f6b9ec757777077a0dc01755e4ab691e6a8a12bc:docs/specifiche_architetturali_area_clienti_nzt_solutions.md:generic-api-key:318

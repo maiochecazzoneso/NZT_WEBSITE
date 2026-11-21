@@ -444,6 +444,8 @@ def _prod(**over: Any) -> dict[str, Any]:
         "mail_backend": "resend",
         "resend_api_key": "re_test_key",
         "mail_from": "NZT Solutions <noreply@nztsolutions.it>",
+        # production: Redis with a password (internal Railway host, so redis:// is accepted)
+        "redis_url": "redis://default:x@redis.railway.internal:6379/0",
     }
     base.update(over)
     return base
@@ -537,7 +539,6 @@ def test_prod_requires_explicit_infrastructure_urls(
         "mongodb_database": "nzt",
         "redis_url": "rediss://default:x@redis.internal:6379/0",
     }
-    explicit.pop(field)
     kwargs = {
         **_prod(),
         **explicit,
@@ -546,6 +547,7 @@ def test_prod_requires_explicit_infrastructure_urls(
         "storage_access_key_id": "a",
         "storage_secret_access_key": "b",
     }
+    kwargs.pop(field)  # _prod() also sets redis_url: drop it after the merge
     with pytest.raises(ValidationError, match=env):
         Settings(_env_file=None, **kwargs)  # type: ignore[call-arg]
     # The same value supplied through the environment counts as explicit.
@@ -610,7 +612,8 @@ def test_schema_step_in_production_requires_migrations_uri(monkeypatch: pytest.M
     assert Settings().is_production  # the environment above is a valid production config
     get_settings.cache_clear()
     try:
-        with pytest.raises(RuntimeError, match="NZT_MONGODB_MIGRATIONS_URI is required"):
+        # pydantic ValidationError (a ValueError) raised while loading the schema settings
+        with pytest.raises(ValueError, match="requires NZT_MONGODB_MIGRATIONS_URI"):
             schema_main([])
     finally:
         get_settings.cache_clear()

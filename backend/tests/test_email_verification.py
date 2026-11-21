@@ -120,7 +120,7 @@ async def test_registration_survives_mailer_failure_without_logging_secrets(
     with caplog.at_level(logging.DEBUG):
         key, token, _ = await _registered(client, email="fail@domain.com")
     assert outbox(app) == []
-    assert "verification email delivery failed (MailDeliveryError)" in caplog.text
+    assert "verification email delivery failed (MailDeliveryError" in caplog.text
     assert "fail@domain.com" not in caplog.text
     assert "verifica-email" not in caplog.text
     # The account works and the user can ask for a new email once delivery is back.
@@ -430,6 +430,7 @@ _PROD: dict[str, Any] = {
     "mail_backend": "resend",
     "resend_api_key": "re_test_key",
     "mail_from": "NZT Solutions <noreply@nztsolutions.it>",
+    "redis_url": "redis://default:x@redis.railway.internal:6379/0",
 }
 
 

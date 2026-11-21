@@ -20,7 +20,8 @@ EXPECTED = {
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: https:; connect-src 'self' https://accounts.google.com "
         "https://oauth2.googleapis.com https://api.nztsolutions.it "
-        "https://clienti.nztsolutions.it https://storage.nztsolutions.it; "
+        "https://clienti.nztsolutions.it https://admin.nztsolutions.it "
+        "https://storage.nztsolutions.it; "
         "frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
     ),
     "cache-control": "no-store",
@@ -136,6 +137,7 @@ async def test_docs_disabled_in_production(monkeypatch: pytest.MonkeyPatch):
         mail_backend="resend",
         resend_api_key="re_test_key",
         mail_from="NZT Solutions <noreply@nztsolutions.it>",
+        redis_url="redis://default:x@redis.railway.internal:6379/0",
     )
     app = create_app(settings)
     # No lifespan needed: routing for docs is decided at construction time.

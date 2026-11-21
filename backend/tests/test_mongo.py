@@ -189,7 +189,15 @@ async def test_app_user_is_dml_only_on_its_database():
         await db.users.insert_one(doc)
         assert await db.users.count_documents({}) == 1
         await db.users.update_one({"_id": doc["_id"]}, {"$set": {"isVerified": True}})
-        await db.users.delete_one({"_id": doc["_id"]})
+        # Per-collection least privilege: the API never deletes users (nor download logs).
+        for denied in (
+            lambda: db.users.delete_one({"_id": doc["_id"]}),
+            lambda: db.download_logs.delete_many({}),
+            lambda: db.download_logs.find_one(),
+        ):
+            with pytest.raises(OperationFailure) as exc:
+                await denied()
+            assert exc.value.code == _UNAUTHORIZED
     finally:
         await client.close()
 
