@@ -1,11 +1,9 @@
-# Vulnerabilità di Caddy (binario Go dell'immagine frontend/deploy/web.Dockerfile) valutate a mano
+# Vulnerabilità di Caddy (binario Go dell'immagine frontend/deploy/web.Dockerfile, compilato con xcaddy) valutate a mano
 # e accettate dal proprietario del repository il 2026-11-21. Usato SOLO per la scansione di quella
 # immagine (security.yml). Ogni voce scade: alla scadenza il controllo torna a fallire e va
 # rivalutata (o Caddy aggiornato).
 #
-# go-jose v3 - DoS con parametri RSA malevoli in una JWK. Nessuna versione corretta disponibile.
+# go-jose v3 - DoS con parametri RSA malevoli in una JWK. Nessuna versione corretta disponibile
+# (x/net e libreria standard Go invece sono corrette: Caddy è compilato con Go e x/net aggiornate).
 # Caddy usa go-jose solo per ACME (certificati automatici), disattivato: `auto_https off`, `admin off`.
 CVE-2026-116587 exp:2027-02-21
-# golang.org/x/net/html - DoS con HTML malevolo (corretto in 0.62.0, serve una nuova release di Caddy).
-# Il nostro Caddyfile non usa template/markdown: Caddy non analizza HTML, serve file statici.
-CVE-2026-78661 exp:2027-02-21
